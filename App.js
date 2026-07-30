@@ -62,7 +62,9 @@ const C = new Proxy(LIGHT, {
   },
 });
 
-const STORAGE_KEY = "motorly-v1";
+const LEGACY_STORAGE_KEY = "motorly-v1";
+const STORAGE_PREFIX = "motorly-v2";
+const storageKeyForUser = (userId) => `${STORAGE_PREFIX}:${userId}`;
 const today = () => new Date().toISOString().slice(0, 10);
 const money = (n) =>
   `₹${Number(n || 0).toLocaleString("en-IN", { maximumFractionDigits: 0 })}`;
@@ -110,114 +112,74 @@ function VehicleGlyph({ vehicle, size = 22, color = C.green, outlined }) {
   );
 }
 
-const seed = {
-  owner: {
-    name: "Arjun Mehta",
-    email: "arjun@example.com",
-    phone: "+91 98765 43210",
-  },
-  car: {
-    make: "Hyundai",
-    model: "Creta",
-    year: "2022",
-    fuelType: "Petrol",
-    registration: "KA 01 MN 4821",
-    tank: "50",
-  },
-  fuel: [
-    {
-      id: "f1",
-      date: "2026-04-04",
-      odometer: 24190,
-      liters: 34.8,
-      amount: 3532,
-      station: "IndianOil",
-      note: "Full tank",
-    },
-    {
-      id: "f2",
-      date: "2026-04-18",
-      odometer: 24652,
-      liters: 35.2,
-      amount: 3573,
-      station: "Shell",
-      note: "Full tank",
-    },
-    {
-      id: "f3",
-      date: "2026-05-03",
-      odometer: 25121,
-      liters: 34.5,
-      amount: 3502,
-      station: "HP Fuel",
-      note: "Full tank",
-    },
-    {
-      id: "f4",
-      date: "2026-05-19",
-      odometer: 25578,
-      liters: 36.1,
-      amount: 3664,
-      station: "IndianOil",
-      note: "Full tank",
-    },
-    {
-      id: "f5",
-      date: "2026-06-05",
-      odometer: 26043,
-      liters: 34.2,
-      amount: 3471,
-      station: "Shell",
-      note: "Full tank",
-    },
-    {
-      id: "f6",
-      date: "2026-06-22",
-      odometer: 26506,
-      liters: 35.0,
-      amount: 3553,
-      station: "IndianOil",
-      note: "Full tank",
-    },
-  ],
-  expenses: [
-    {
-      id: "e1",
-      date: "2026-02-12",
-      odometer: 22610,
-      category: "Service",
-      workshop: "Hyundai Service",
-      amount: 8450,
-      description: "Scheduled service · oil and filters",
-    },
-    {
-      id: "e2",
-      date: "2026-03-08",
-      odometer: 23340,
-      category: "Insurance",
-      workshop: "Acko",
-      amount: 13200,
-      description: "Annual comprehensive insurance",
-    },
-    {
-      id: "e3",
-      date: "2026-05-11",
-      odometer: 25340,
-      category: "Maintenance",
-      workshop: "Tyre Pro",
-      amount: 2800,
-      description: "Wheel alignment and balancing",
-    },
-  ],
-};
+const emptyVehicle = () => ({
+  id: "vehicle-primary",
+  type: "car",
+  make: "",
+  model: "",
+  year: "",
+  fuelType: "Petrol",
+  registration: "",
+  tank: "",
+});
+
+const emptyGarage = () => ({
+  owner: { name: "", email: "", phone: "" },
+  car: emptyVehicle(),
+  vehicles: [emptyVehicle()],
+  activeVehicleId: "all",
+  fuel: [],
+  expenses: [],
+});
+
+const DEMO_FUEL_IDS = new Set(["f1", "f2", "f3", "f4", "f5", "f6"]);
+const DEMO_EXPENSE_IDS = new Set(["e1", "e2", "e3"]);
+const isDemoVehicle = (vehicle) =>
+  String(vehicle?.registration || "")
+    .replace(/[\s-]/g, "")
+    .toUpperCase() === "KA01MN4821" &&
+  String(vehicle?.make || "").toLowerCase() === "hyundai" &&
+  String(vehicle?.model || "").toLowerCase() === "creta";
+
+function removeLegacyDemoData(source = {}) {
+  const sourceVehicles = source.vehicles?.length
+    ? source.vehicles
+    : source.car
+      ? [source.car]
+      : [];
+  const vehicles = sourceVehicles.filter((vehicle) => !isDemoVehicle(vehicle));
+  const cleanOwner =
+    String(source.owner?.email || "").toLowerCase() === "arjun@example.com"
+      ? { name: "", email: "", phone: "" }
+      : source.owner;
+
+  return {
+    ...source,
+    owner: cleanOwner || { name: "", email: "", phone: "" },
+    car: vehicles[0],
+    vehicles,
+    activeVehicleId: vehicles.some(
+      (vehicle) => vehicle.id === source.activeVehicleId,
+    )
+      ? source.activeVehicleId
+      : "all",
+    fuel: (source.fuel || []).filter(
+      (entry) => !DEMO_FUEL_IDS.has(entry.id),
+    ),
+    expenses: (source.expenses || []).filter(
+      (entry) => !DEMO_EXPENSE_IDS.has(entry.id),
+    ),
+  };
+}
 
 function normalizeGarage(source) {
+  const safeSource = source || emptyGarage();
   const fallbackVehicle = {
-    id: "vehicle-primary",
-    ...source.car,
+    ...emptyVehicle(),
+    ...(safeSource.car || {}),
   };
-  const vehicles = (source.vehicles?.length
-    ? source.vehicles
+  const vehicles = (safeSource.vehicles?.length
+    ? safeSource.vehicles
     : [fallbackVehicle]
   ).map((vehicle, index) => ({
     id: vehicle.id || `vehicle-${index + 1}`,
@@ -227,15 +189,21 @@ function normalizeGarage(source) {
   const primaryVehicleId = vehicles[0].id;
 
   return {
-    ...source,
-    car: source.car || vehicles[0],
+    ...safeSource,
+    owner: {
+      name: "",
+      email: "",
+      phone: "",
+      ...(safeSource.owner || {}),
+    },
+    car: vehicles[0],
     vehicles,
-    activeVehicleId: source.activeVehicleId || "all",
-    fuel: (source.fuel || []).map((entry) => ({
+    activeVehicleId: safeSource.activeVehicleId || "all",
+    fuel: (safeSource.fuel || []).map((entry) => ({
       ...entry,
       vehicleId: entry.vehicleId || primaryVehicleId,
     })),
-    expenses: (source.expenses || []).map((entry) => ({
+    expenses: (safeSource.expenses || []).map((entry) => ({
       ...entry,
       vehicleId: entry.vehicleId || primaryVehicleId,
     })),
@@ -1756,7 +1724,7 @@ function mileageSeries(fuel) {
 export default function App() {
   const { width } = useWindowDimensions();
   const isDesktop = width >= 900;
-  const [data, setData] = useState(() => normalizeGarage(seed));
+  const [data, setData] = useState(() => normalizeGarage(emptyGarage()));
   const [loading, setLoading] = useState(true);
   const [session, setSession] = useState(null);
   const [authLoading, setAuthLoading] = useState(true);
@@ -1813,23 +1781,61 @@ export default function App() {
   }, [session?.user?.id]);
 
   useEffect(() => {
+    if (!session?.user?.id) {
+      setData(normalizeGarage(emptyGarage()));
+      setLoading(false);
+      return;
+    }
+
+    let active = true;
+    const userStorageKey = storageKeyForUser(session.user.id);
+    setLoading(true);
+
     Promise.all([
-      AsyncStorage.getItem(STORAGE_KEY),
+      AsyncStorage.getItem(userStorageKey),
+      AsyncStorage.getItem(LEGACY_STORAGE_KEY),
       AsyncStorage.getItem("motorly-theme"),
     ])
-      .then(([rawData, savedTheme]) => {
-        if (rawData) setData(normalizeGarage(JSON.parse(rawData)));
+      .then(async ([userData, legacyData, savedTheme]) => {
+        if (!active) return;
+
+        if (userData) {
+          setData(normalizeGarage(JSON.parse(userData)));
+        } else if (legacyData) {
+          const migrated = normalizeGarage(
+            removeLegacyDemoData(JSON.parse(legacyData)),
+          );
+          setData(migrated);
+          await AsyncStorage.setItem(
+            userStorageKey,
+            JSON.stringify(migrated),
+          );
+          await AsyncStorage.removeItem(LEGACY_STORAGE_KEY);
+        } else {
+          setData(normalizeGarage(emptyGarage()));
+        }
         setDarkMode(savedTheme === "dark");
       })
-      .catch(() => {})
-      .finally(() => setLoading(false));
-  }, []);
+      .catch(() => {
+        if (active) setData(normalizeGarage(emptyGarage()));
+      })
+      .finally(() => {
+        if (active) setLoading(false);
+      });
+
+    return () => {
+      active = false;
+    };
+  }, [session?.user?.id]);
   const persist = (next) => {
     const normalized = normalizeGarage(next);
     setData(normalized);
-    AsyncStorage.setItem(STORAGE_KEY, JSON.stringify(normalized)).catch(
-      () => {},
-    );
+    if (session?.user?.id) {
+      AsyncStorage.setItem(
+        storageKeyForUser(session.user.id),
+        JSON.stringify(normalized),
+      ).catch(() => {});
+    }
   };
   const vehicles = data.vehicles;
   const activeVehicleId = data.activeVehicleId || "all";
@@ -1837,6 +1843,11 @@ export default function App() {
     vehicles.find((vehicle) => vehicle.id === activeVehicleId) || vehicles[0];
   const scopedData = {
     ...data,
+    owner: {
+      ...data.owner,
+      name: account?.display_name || data.owner.name || "Driver",
+      email: session?.user?.email || data.owner.email,
+    },
     car: activeVehicle,
     fuel:
       activeVehicleId === "all"
@@ -2457,7 +2468,7 @@ const styleDefinitions = {
     alignItems: "center",
     justifyContent: "center",
   },
-  profileInitials: { fontSize: 18, fontWeight: "900", color: "#20262E" },
+  profileInitials: { fontSize: 18, fontWeight: "900", color: "#202A36" },
   profileName: { fontSize: 20, fontWeight: "800", color: C.onAccent },
   profileSub: { fontSize: 12, color: "#B8C4CF", marginTop: 4 },
   vehicleTabs: {
