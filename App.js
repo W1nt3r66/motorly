@@ -1,6 +1,7 @@
 import React, { useEffect, useMemo, useState } from "react";
 import {
   ActivityIndicator,
+  Alert,
   Image,
   Modal,
   Platform,
@@ -17,24 +18,49 @@ import {
 import { StatusBar } from "expo-status-bar";
 import * as ImagePicker from "expo-image-picker";
 import AsyncStorage from "@react-native-async-storage/async-storage";
-import { Ionicons } from "@expo/vector-icons";
+import { Ionicons, MaterialCommunityIcons } from "@expo/vector-icons";
 import { supabase } from "./lib/supabase";
 import AuthScreen from "./components/AuthScreen";
+import FriendsScreen from "./components/FriendsScreen";
 
-const C = {
-  ink: "#17211D",
-  muted: "#69756F",
-  green: "#173F35",
-  green2: "#245D4D",
-  mint: "#D9EAE3",
-  lime: "#DDF06F",
-  cream: "#F6F7F2",
+const LIGHT = {
+  ink: "#20262E",
+  muted: "#687482",
+  green: "#456B8C",
+  accentSurface: "#446A8B",
+  green2: "#314E69",
+  mint: "#DCE6EE",
+  lime: "#D8E65A",
+  cream: "#F1F3F5",
   white: "#FFFFFF",
-  line: "#E2E6E1",
-  orange: "#E79748",
-  red: "#D85C4A",
-  blue: "#66899B",
+  onAccent: "#FEFFFF",
+  line: "#D5DBE1",
+  orange: "#B77A48",
+  red: "#C45E5E",
+  blue: "#5F809E",
 };
+const DARK = {
+  ink: "#E7ECF2",
+  muted: "#9AA7B5",
+  green: "#8FAFD0",
+  accentSurface: "#314B63",
+  green2: "#2B3D52",
+  mint: "#202B38",
+  lime: "#D8E65A",
+  cream: "#0B0E12",
+  white: "#151B23",
+  onAccent: "#F3F6FA",
+  line: "#2B3542",
+  orange: "#C78955",
+  red: "#E07A6B",
+  blue: "#7EA6C8",
+};
+let nightModeActive = false;
+const C = new Proxy(LIGHT, {
+  get(target, property) {
+    return (nightModeActive ? DARK : target)[property];
+  },
+});
 
 const STORAGE_KEY = "motorly-v1";
 const today = () => new Date().toISOString().slice(0, 10);
@@ -47,6 +73,42 @@ const shortDate = (value) =>
     day: "numeric",
     month: "short",
   });
+const deviceGreeting = () => {
+  const hour = new Date().getHours();
+  if (hour < 5) return "Good night";
+  if (hour < 12) return "Good morning";
+  if (hour < 17) return "Good afternoon";
+  if (hour < 21) return "Good evening";
+  return "Good night";
+};
+const validIndianPhone = (value) =>
+  /^(?:\+91|91)?[6-9]\d{9}$/.test(String(value || "").replace(/[\s-]/g, ""));
+const validEmail = (value) =>
+  /^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/.test(String(value || "").trim());
+const validIndianRegistration = (value) => {
+  const normalized = String(value || "")
+    .toUpperCase()
+    .replace(/[\s-]/g, "");
+  return (
+    /^[A-Z]{2}\d{1,2}[A-Z]{1,3}\d{4}$/.test(normalized) ||
+    /^\d{2}BH\d{4}[A-Z]{1,2}$/.test(normalized)
+  );
+};
+function VehicleGlyph({ vehicle, size = 22, color = C.green, outlined }) {
+  if (vehicle?.type === "motorbike") {
+    return (
+      <MaterialCommunityIcons name="motorbike" size={size} color={color} />
+    );
+  }
+
+  return (
+    <Ionicons
+      name={outlined ? "car-sport-outline" : "car-sport"}
+      size={size}
+      color={color}
+    />
+  );
+}
 
 const seed = {
   owner: {
@@ -149,15 +211,56 @@ const seed = {
   ],
 };
 
+function normalizeGarage(source) {
+  const fallbackVehicle = {
+    id: "vehicle-primary",
+    ...source.car,
+  };
+  const vehicles = (source.vehicles?.length
+    ? source.vehicles
+    : [fallbackVehicle]
+  ).map((vehicle, index) => ({
+    id: vehicle.id || `vehicle-${index + 1}`,
+    type: vehicle.type || "car",
+    ...vehicle,
+  }));
+  const primaryVehicleId = vehicles[0].id;
+
+  return {
+    ...source,
+    car: source.car || vehicles[0],
+    vehicles,
+    activeVehicleId: source.activeVehicleId || "all",
+    fuel: (source.fuel || []).map((entry) => ({
+      ...entry,
+      vehicleId: entry.vehicleId || primaryVehicleId,
+    })),
+    expenses: (source.expenses || []).map((entry) => ({
+      ...entry,
+      vehicleId: entry.vehicleId || primaryVehicleId,
+    })),
+  };
+}
+
 const NAV = [
   ["home", "Overview", "grid-outline"],
   ["fuel", "Fuel log", "water-outline"],
   ["expenses", "Expenses", "receipt-outline"],
+  ["friends", "Friends", "people-outline"],
   ["calculators", "Calculators", "calculator-outline"],
-  ["profile", "Garage", "car-sport-outline"],
+  ["profile", "Garage", "speedometer-outline"],
 ];
 
-const fieldStyle = {
+const CHART_COLORS = [
+  "#8FAFCC",
+  "#D2A06B",
+  "#B39ACA",
+  "#D78491",
+  "#7F9FBE",
+  "#C4A6B8",
+];
+
+const fieldStyle = () => ({
   borderWidth: 1,
   borderColor: C.line,
   borderRadius: 12,
@@ -166,7 +269,7 @@ const fieldStyle = {
   fontSize: 15,
   color: C.ink,
   backgroundColor: C.white,
-};
+});
 
 function IconButton({ icon, onPress, light = false }) {
   return (
@@ -177,12 +280,20 @@ function IconButton({ icon, onPress, light = false }) {
         light && { backgroundColor: "rgba(255,255,255,.12)" },
       ]}
     >
-      <Ionicons name={icon} size={20} color={light ? C.white : C.green} />
+      <Ionicons name={icon} size={20} color={light ? C.onAccent : C.green} />
     </TouchableOpacity>
   );
 }
 
-function Button({ children, onPress, icon, secondary, small, disabled }) {
+function Button({
+  children,
+  onPress,
+  icon,
+  customIcon,
+  secondary,
+  small,
+  disabled,
+}) {
   return (
     <TouchableOpacity
       disabled={disabled}
@@ -194,8 +305,13 @@ function Button({ children, onPress, icon, secondary, small, disabled }) {
         disabled && { opacity: 0.45 },
       ]}
     >
-      {icon && (
-        <Ionicons name={icon} size={18} color={secondary ? C.green : C.white} />
+      {customIcon}
+      {!customIcon && icon && (
+        <Ionicons
+          name={icon}
+          size={18}
+          color={secondary ? C.green : C.onAccent}
+        />
       )}
       <Text style={[styles.buttonText, secondary && { color: C.green }]}>
         {children}
@@ -263,16 +379,36 @@ function Empty({ icon, title, text }) {
   );
 }
 
-function AppShell({ page, setPage, children, car, onAdd, isDesktop }) {
+function AppShell({
+  page,
+  setPage,
+  children,
+  car,
+  onAdd,
+  isDesktop,
+  darkMode,
+  vehicleScope,
+  onCycleVehicle,
+  onToggleDarkMode,
+  onNotifications,
+  onSignOut,
+}) {
   return (
-    <View style={styles.app}>
+    <View style={[styles.app, darkMode && styles.appDark]}>
       {isDesktop && (
-        <View style={styles.sidebar}>
+        <View style={[styles.sidebar, darkMode && styles.sidebarDark]}>
           <View style={styles.brand}>
             <View style={styles.brandMark}>
-              <Ionicons name="speedometer" size={22} color={C.green} />
+              <Ionicons name="speedometer" size={22} color="#20262E" />
             </View>
-            <Text style={styles.brandText}>motorly</Text>
+            <Text
+              style={[
+                styles.brandText,
+                darkMode && { color: "#D8E65A" },
+              ]}
+            >
+              motorly
+            </Text>
           </View>
           <View style={styles.nav}>
             {NAV.map(([id, label, icon]) => (
@@ -299,7 +435,7 @@ function AppShell({ page, setPage, children, car, onAdd, isDesktop }) {
           </View>
           <View style={styles.carMini}>
             <View style={styles.carMiniIcon}>
-              <Ionicons name="car-sport" size={24} color={C.green} />
+              <VehicleGlyph vehicle={car} size={24} color={C.green} />
             </View>
             <Text style={styles.carMiniName}>
               {car.make} {car.model}
@@ -308,22 +444,45 @@ function AppShell({ page, setPage, children, car, onAdd, isDesktop }) {
           </View>
         </View>
       )}
-      <View style={styles.main}>
-        <View style={styles.topbar}>
+      <View style={[styles.main, darkMode && styles.mainDark]}>
+        <View style={[styles.topbar, darkMode && styles.topbarDark]}>
           <View>
             {!isDesktop && <Text style={styles.mobileBrand}>motorly</Text>}
             <Text style={styles.pageEyebrow}>MY GARAGE</Text>
           </View>
           <View style={styles.topActions}>
+            <Button
+              onPress={onCycleVehicle}
+              customIcon={
+                <VehicleGlyph
+                  vehicle={car}
+                  size={18}
+                  color={C.green}
+                  outlined
+                />
+              }
+              secondary
+              small
+            >
+              {vehicleScope}
+            </Button>
             <Button onPress={onAdd} icon="add" small>
               Add entry
             </Button>
-            <IconButton icon="notifications-outline" />
+            <IconButton
+              icon={darkMode ? "sunny-outline" : "moon-outline"}
+              onPress={onToggleDarkMode}
+            />
+            <IconButton
+              icon="notifications-outline"
+              onPress={onNotifications}
+            />
+            <IconButton icon="log-out-outline" onPress={onSignOut} />
           </View>
         </View>
         {children}
         {!isDesktop && (
-          <View style={styles.bottomNav}>
+          <View style={[styles.bottomNav, darkMode && styles.bottomNavDark]}>
             {NAV.map(([id, label, icon]) => (
               <TouchableOpacity
                 key={id}
@@ -352,7 +511,14 @@ function AppShell({ page, setPage, children, car, onAdd, isDesktop }) {
   );
 }
 
-function Overview({ data, isDesktop, setPage, openAdd }) {
+function Overview({
+  data,
+  isDesktop,
+  setPage,
+  openAdd,
+  allVehicles,
+  vehicleCount,
+}) {
   const stats = useMemo(() => computeStats(data), [data]);
   const trend = mileageSeries(data.fuel).slice(-6);
   const maxMileage = Math.max(16, ...trend.map((x) => x.value));
@@ -370,10 +536,15 @@ function Overview({ data, isDesktop, setPage, openAdd }) {
       <View style={[styles.hero, !isDesktop && styles.heroMobile]}>
         <View style={{ flex: 1 }}>
           <Text style={styles.heroKicker}>
-            GOOD MORNING, {data.owner.name.split(" ")[0].toUpperCase()}
+            {deviceGreeting().toUpperCase()},{" "}
+            {data.owner.name.split(" ")[0].toUpperCase()}
           </Text>
           <Text style={[styles.heroTitle, !isDesktop && { fontSize: 30 }]}>
-            Your car, in a nutshell.
+            {allVehicles
+              ? "Your garage, in a nutshell."
+              : data.car.type === "motorbike"
+                ? "Your motorbike, in a nutshell."
+                : "Your car, in a nutshell."}
           </Text>
           <Text style={styles.heroText}>
             Every fill-up and expense, organized into a clearer view of
@@ -382,15 +553,19 @@ function Overview({ data, isDesktop, setPage, openAdd }) {
         </View>
         <View style={styles.heroCar}>
           <View style={styles.heroCarIcon}>
-            <Ionicons name="car-sport" size={35} color={C.lime} />
+            <VehicleGlyph vehicle={data.car} size={35} color={C.lime} />
           </View>
-          <View>
-            <Text style={styles.heroCarName}>
-              {data.car.make} {data.car.model}
-            </Text>
-            <Text style={styles.heroCarSub}>
-              {data.car.year} · {data.car.fuelType} · {data.car.registration}
-            </Text>
+            <View>
+              <Text style={styles.heroCarName}>
+                {allVehicles
+                  ? "All vehicles"
+                  : `${data.car.make} ${data.car.model}`}
+              </Text>
+              <Text style={styles.heroCarSub}>
+                {allVehicles
+                  ? `${vehicleCount} vehicles · combined analytics`
+                  : `${data.car.year} · ${data.car.fuelType} · ${data.car.registration}`}
+              </Text>
           </View>
         </View>
       </View>
@@ -695,12 +870,8 @@ function Expenses({ data, openAdd, remove }) {
                         styles.progressFill,
                         {
                           width: `${Math.max(8, (total / max) * 100)}%`,
-                          backgroundColor: [
-                            C.green,
-                            C.orange,
-                            C.blue,
-                            "#846B96",
-                          ][i % 4],
+                          backgroundColor:
+                            CHART_COLORS[i % CHART_COLORS.length],
                         },
                       ]}
                     />
@@ -988,15 +1159,78 @@ function Calculators() {
   );
 }
 
-function Profile({ data, updateProfile, account, email, onSignOut }) {
+function Profile({ data, updateProfile, account, email }) {
   const { width } = useWindowDimensions();
   const compact = width < 800;
-  const [owner, setOwner] = useState(data.owner);
-  const [car, setCar] = useState(data.car);
+  const [owner, setOwner] = useState({
+    ...data.owner,
+    email: email || data.owner.email,
+  });
+  const [vehicles, setVehicles] = useState(data.vehicles);
+  const [editingVehicleId, setEditingVehicleId] = useState(
+    data.vehicles[0].id,
+  );
   const [saved, setSaved] = useState(false);
+  const [validationError, setValidationError] = useState("");
+  const car =
+    vehicles.find((vehicle) => vehicle.id === editingVehicleId) || vehicles[0];
+  const setCar = (nextCar) => {
+    setVehicles((current) =>
+      current.map((vehicle) =>
+        vehicle.id === editingVehicleId ? nextCar : vehicle,
+      ),
+    );
+  };
+  const addVehicle = () => {
+    const id = `vehicle-${Date.now()}`;
+    setVehicles((current) => [
+      ...current,
+      {
+        id,
+        type: "car",
+        make: "",
+        model: "",
+        year: "",
+        fuelType: "Petrol",
+        registration: "",
+        tank: "",
+      },
+    ]);
+    setEditingVehicleId(id);
+  };
+  const removeVehicle = () => {
+    if (vehicles.length === 1) return;
+    const nextVehicles = vehicles.filter(
+      (vehicle) => vehicle.id !== editingVehicleId,
+    );
+    setVehicles(nextVehicles);
+    setEditingVehicleId(nextVehicles[0].id);
+  };
   const driverName = account?.display_name || owner.name;
   const save = () => {
-    updateProfile(owner, car);
+    setValidationError("");
+    if (!validEmail(owner.email)) {
+      setValidationError("Enter a valid email address.");
+      return;
+    }
+    if (!validIndianPhone(owner.phone)) {
+      setValidationError(
+        "Enter a valid Indian mobile number, such as +91 98765 43210.",
+      );
+      return;
+    }
+    const invalidVehicle = vehicles.find(
+      (vehicle) => !validIndianRegistration(vehicle.registration),
+    );
+    if (invalidVehicle) {
+      setValidationError(
+        `Enter a valid Indian registration number for ${
+          invalidVehicle.make || "the selected vehicle"
+        }, such as KA 01 AB 1234 or 22 BH 1234 AA.`,
+      );
+      return;
+    }
+    updateProfile(owner, vehicles);
     setSaved(true);
     setTimeout(() => setSaved(false), 1800);
   };
@@ -1008,7 +1242,7 @@ function Profile({ data, updateProfile, account, email, onSignOut }) {
       <PageIntro
         eyebrow="YOUR GARAGE"
         title="Driver and vehicle details."
-        text="These details personalize analytics and keep records tied to the right car."
+        text="These details personalize analytics and keep records tied to the right vehicle."
       />
       <View style={styles.profileHero}>
         <View style={styles.profileAvatar}>
@@ -1057,8 +1291,83 @@ function Profile({ data, updateProfile, account, email, onSignOut }) {
         <Card style={{ flex: 1 }}>
           <SectionTitle
             title="Vehicle details"
-            subtitle="Used across records and analytics"
+            subtitle="Add vehicles and edit the selected vehicle"
           />
+          <View style={styles.vehicleTabs}>
+            {vehicles.map((vehicle, index) => (
+              <TouchableOpacity
+                key={vehicle.id}
+                onPress={() => setEditingVehicleId(vehicle.id)}
+                style={[
+                  styles.vehicleTab,
+                  editingVehicleId === vehicle.id && styles.vehicleTabActive,
+                ]}
+              >
+                <VehicleGlyph
+                  vehicle={vehicle}
+                  size={16}
+                  color={
+                    editingVehicleId === vehicle.id ? C.onAccent : C.green
+                  }
+                  outlined
+                />
+                <Text
+                  style={[
+                    styles.vehicleTabText,
+                    editingVehicleId === vehicle.id &&
+                      styles.vehicleTabTextActive,
+                  ]}
+                >
+                  {vehicle.make || "Vehicle"} {vehicle.model || index + 1}
+                </Text>
+              </TouchableOpacity>
+            ))}
+            <TouchableOpacity
+              onPress={addVehicle}
+              style={styles.addVehicleTab}
+            >
+              <Ionicons name="add" size={18} color={C.green} />
+              <Text style={styles.addVehicleText}>Add vehicle</Text>
+            </TouchableOpacity>
+          </View>
+          <Text style={styles.fieldLabel}>Vehicle type</Text>
+          <View style={styles.vehicleTypeRow}>
+            {[
+              ["car", "Car", "car-sport-outline"],
+              ["motorbike", "Motorbike", "motorbike"],
+            ].map(([type, label, icon]) => (
+              <TouchableOpacity
+                key={type}
+                onPress={() => setCar({ ...car, type })}
+                style={[
+                  styles.vehicleTypeOption,
+                  car.type === type && styles.vehicleTypeOptionActive,
+                ]}
+              >
+                {type === "motorbike" ? (
+                  <MaterialCommunityIcons
+                    name={icon}
+                    size={21}
+                    color={car.type === type ? C.onAccent : C.green}
+                  />
+                ) : (
+                  <Ionicons
+                    name={icon}
+                    size={19}
+                    color={car.type === type ? C.onAccent : C.green}
+                  />
+                )}
+                <Text
+                  style={[
+                    styles.vehicleTypeText,
+                    car.type === type && styles.vehicleTypeTextActive,
+                  ]}
+                >
+                  {label}
+                </Text>
+              </TouchableOpacity>
+            ))}
+          </View>
           <View style={styles.formRow}>
             <View style={{ flex: 1 }}>
               <FormField
@@ -1095,7 +1404,9 @@ function Profile({ data, updateProfile, account, email, onSignOut }) {
           <FormField
             label="Registration number"
             value={car.registration}
-            onChangeText={(registration) => setCar({ ...car, registration })}
+            onChangeText={(registration) =>
+              setCar({ ...car, registration: registration.toUpperCase() })
+            }
           />
           <FormField
             label="Tank capacity (litres)"
@@ -1103,8 +1414,22 @@ function Profile({ data, updateProfile, account, email, onSignOut }) {
             onChangeText={(tank) => setCar({ ...car, tank })}
             numeric
           />
+          {vehicles.length > 1 && (
+            <TouchableOpacity
+              onPress={removeVehicle}
+              style={styles.removeVehicle}
+            >
+              <Ionicons name="trash-outline" size={17} color={C.red} />
+              <Text style={styles.removeVehicleText}>
+                Remove this vehicle
+              </Text>
+            </TouchableOpacity>
+          )}
         </Card>
       </View>
+      {!!validationError && (
+        <Text style={styles.validationError}>{validationError}</Text>
+      )}
       <View
         style={{
           flexDirection: "row",
@@ -1113,9 +1438,6 @@ function Profile({ data, updateProfile, account, email, onSignOut }) {
           flexWrap: "wrap",
         }}
       >
-        <Button onPress={onSignOut} icon="log-out-outline" secondary>
-          Sign out
-        </Button>
         <Button onPress={save} icon={saved ? "checkmark" : "save-outline"}>
           {saved ? "Saved" : "Save garage"}
         </Button>
@@ -1156,11 +1478,11 @@ function FormField({
         value={String(value ?? "")}
         onChangeText={onChangeText}
         placeholder={placeholder}
-        placeholderTextColor="#A0AAA5"
+        placeholderTextColor="#8A949F"
         keyboardType={numeric ? "decimal-pad" : "default"}
         multiline={multiline}
         style={[
-          fieldStyle,
+          fieldStyle(),
           multiline && { height: 86, paddingTop: 13, textAlignVertical: "top" },
         ]}
       />
@@ -1434,13 +1756,16 @@ function mileageSeries(fuel) {
 export default function App() {
   const { width } = useWindowDimensions();
   const isDesktop = width >= 900;
-  const [data, setData] = useState(seed);
+  const [data, setData] = useState(() => normalizeGarage(seed));
   const [loading, setLoading] = useState(true);
   const [session, setSession] = useState(null);
   const [authLoading, setAuthLoading] = useState(true);
   const [account, setAccount] = useState(null);
+  const [darkMode, setDarkMode] = useState(false);
   const [page, setPage] = useState("home");
   const [modal, setModal] = useState({ open: false, type: "fuel" });
+  nightModeActive = darkMode;
+  styles = darkMode ? darkStyles : lightStyles;
 
   useEffect(() => {
     let mounted = true;
@@ -1488,27 +1813,69 @@ export default function App() {
   }, [session?.user?.id]);
 
   useEffect(() => {
-    AsyncStorage.getItem(STORAGE_KEY)
-      .then((raw) => {
-        if (raw) setData(JSON.parse(raw));
+    Promise.all([
+      AsyncStorage.getItem(STORAGE_KEY),
+      AsyncStorage.getItem("motorly-theme"),
+    ])
+      .then(([rawData, savedTheme]) => {
+        if (rawData) setData(normalizeGarage(JSON.parse(rawData)));
+        setDarkMode(savedTheme === "dark");
       })
       .catch(() => {})
       .finally(() => setLoading(false));
   }, []);
   const persist = (next) => {
-    setData(next);
-    AsyncStorage.setItem(STORAGE_KEY, JSON.stringify(next)).catch(() => {});
+    const normalized = normalizeGarage(next);
+    setData(normalized);
+    AsyncStorage.setItem(STORAGE_KEY, JSON.stringify(normalized)).catch(
+      () => {},
+    );
+  };
+  const vehicles = data.vehicles;
+  const activeVehicleId = data.activeVehicleId || "all";
+  const activeVehicle =
+    vehicles.find((vehicle) => vehicle.id === activeVehicleId) || vehicles[0];
+  const scopedData = {
+    ...data,
+    car: activeVehicle,
+    fuel:
+      activeVehicleId === "all"
+        ? data.fuel
+        : data.fuel.filter((entry) => entry.vehicleId === activeVehicleId),
+    expenses:
+      activeVehicleId === "all"
+        ? data.expenses
+        : data.expenses.filter((entry) => entry.vehicleId === activeVehicleId),
   };
   const add = (kind, item) =>
     persist({
       ...data,
       [kind === "fuel" ? "fuel" : "expenses"]: [
         ...data[kind === "fuel" ? "fuel" : "expenses"],
-        item,
+        {
+          ...item,
+          vehicleId:
+            activeVehicleId === "all" ? vehicles[0].id : activeVehicleId,
+        },
       ],
     });
   const remove = (list, id) =>
     persist({ ...data, [list]: data[list].filter((x) => x.id !== id) });
+  const toggleDarkMode = () => {
+    setDarkMode((current) => {
+      const next = !current;
+      AsyncStorage.setItem("motorly-theme", next ? "dark" : "light").catch(
+        () => {},
+      );
+      return next;
+    });
+  };
+  const cycleVehicleScope = () => {
+    const scopes = ["all", ...vehicles.map((vehicle) => vehicle.id)];
+    const currentIndex = scopes.indexOf(activeVehicleId);
+    const nextId = scopes[(currentIndex + 1) % scopes.length];
+    persist({ ...data, activeVehicleId: nextId });
+  };
   if (loading || authLoading)
     return (
       <View style={styles.loader}>
@@ -1524,23 +1891,27 @@ export default function App() {
   const body =
     page === "home" ? (
       <Overview
-        data={data}
+        data={scopedData}
         isDesktop={isDesktop}
+        allVehicles={activeVehicleId === "all"}
+        vehicleCount={vehicles.length}
         setPage={setPage}
         openAdd={(type) => setModal({ open: true, type })}
       />
     ) : page === "fuel" ? (
       <FuelLog
-        data={data}
+        data={scopedData}
         openAdd={(type) => setModal({ open: true, type })}
         remove={remove}
       />
     ) : page === "expenses" ? (
       <Expenses
-        data={data}
+        data={scopedData}
         openAdd={(type) => setModal({ open: true, type })}
         remove={remove}
       />
+    ) : page === "friends" ? (
+      <FriendsScreen userId={session.user.id} darkMode={darkMode} />
     ) : page === "calculators" ? (
       <Calculators />
     ) : (
@@ -1548,18 +1919,39 @@ export default function App() {
         data={data}
         account={account}
         email={session.user.email}
-        onSignOut={() => supabase.auth.signOut()}
-        updateProfile={(owner, car) => persist({ ...data, owner, car })}
+        updateProfile={(owner, nextVehicles) =>
+          persist({
+            ...data,
+            owner,
+            vehicles: nextVehicles,
+            car: nextVehicles[0],
+          })
+        }
       />
     );
   return (
-    <SafeAreaView style={styles.safe}>
-      <StatusBar style="dark" />
+    <SafeAreaView style={[styles.safe, darkMode && styles.safeDark]}>
+      <StatusBar style={darkMode ? "light" : "dark"} />
       <AppShell
         page={page}
         setPage={setPage}
-        car={data.car}
+        car={activeVehicle}
+        vehicleScope={
+          activeVehicleId === "all"
+            ? `All vehicles (${vehicles.length})`
+            : `${activeVehicle.make} ${activeVehicle.model}`
+        }
+        onCycleVehicle={cycleVehicleScope}
         isDesktop={isDesktop}
+        darkMode={darkMode}
+        onToggleDarkMode={toggleDarkMode}
+        onNotifications={() =>
+          Alert.alert(
+            "Motorly notifications",
+            "Convoy, fuel, friend-request, and shared-stop alerts are coming in the next stage.",
+          )
+        }
+        onSignOut={() => supabase.auth.signOut()}
         onAdd={() =>
           setModal({
             open: true,
@@ -1579,16 +1971,23 @@ export default function App() {
   );
 }
 
-const styles = StyleSheet.create({
+const styleDefinitions = {
   safe: { flex: 1, backgroundColor: C.cream },
+  safeDark: { backgroundColor: "#0B0E12" },
   app: { flex: 1, flexDirection: "row", backgroundColor: C.cream },
+  appDark: { backgroundColor: "#0B0E12" },
   main: { flex: 1 },
+  mainDark: { backgroundColor: "#0F141B" },
   sidebar: {
     width: 230,
     backgroundColor: C.white,
     borderRightWidth: 1,
     borderRightColor: C.line,
     padding: 24,
+  },
+  sidebarDark: {
+    backgroundColor: "#111821",
+    borderRightColor: "#2B3542",
   },
   brand: {
     flexDirection: "row",
@@ -1620,7 +2019,7 @@ const styles = StyleSheet.create({
     paddingHorizontal: 14,
   },
   navItemActive: { backgroundColor: C.mint },
-  navLabel: { fontSize: 15, fontWeight: "600", color: "#6D7B74" },
+  navLabel: { fontSize: 15, fontWeight: "600", color: "#6D7782" },
   navLabelActive: { color: C.green, fontWeight: "800" },
   carMini: {
     marginTop: "auto",
@@ -1654,6 +2053,10 @@ const styles = StyleSheet.create({
     borderBottomWidth: 1,
     borderBottomColor: C.line,
   },
+  topbarDark: {
+    backgroundColor: "#111821",
+    borderBottomColor: "#2B3542",
+  },
   pageEyebrow: {
     fontSize: 10,
     letterSpacing: 1.8,
@@ -1681,7 +2084,7 @@ const styles = StyleSheet.create({
     minHeight: 44,
     paddingHorizontal: 18,
     borderRadius: 12,
-    backgroundColor: C.green,
+    backgroundColor: C.accentSurface,
     flexDirection: "row",
     gap: 8,
     alignItems: "center",
@@ -1693,7 +2096,7 @@ const styles = StyleSheet.create({
     borderColor: C.line,
   },
   buttonSmall: { minHeight: 40, paddingHorizontal: 14 },
-  buttonText: { color: C.white, fontSize: 14, fontWeight: "800" },
+  buttonText: { color: C.onAccent, fontSize: 14, fontWeight: "800" },
   content: {
     padding: 32,
     paddingBottom: 110,
@@ -1704,7 +2107,7 @@ const styles = StyleSheet.create({
   },
   hero: {
     borderRadius: 24,
-    backgroundColor: C.green,
+    backgroundColor: C.accentSurface,
     padding: 30,
     flexDirection: "row",
     alignItems: "center",
@@ -1723,11 +2126,11 @@ const styles = StyleSheet.create({
     fontSize: 36,
     fontWeight: "800",
     letterSpacing: -1.3,
-    color: C.white,
+    color: C.onAccent,
   },
   heroText: {
     fontSize: 14,
-    color: "#C9D8D2",
+    color: "#C0CBD5",
     marginTop: 8,
     maxWidth: 530,
     lineHeight: 21,
@@ -1749,8 +2152,8 @@ const styles = StyleSheet.create({
     alignItems: "center",
     justifyContent: "center",
   },
-  heroCarName: { fontSize: 17, fontWeight: "800", color: C.white },
-  heroCarSub: { fontSize: 11, color: "#BFD0CA", marginTop: 5 },
+  heroCarName: { fontSize: 17, fontWeight: "800", color: C.onAccent },
+  heroCarSub: { fontSize: 11, color: "#B5C3D0", marginTop: 5 },
   metricsRow: { flexDirection: "row", gap: 14, flexWrap: "wrap" },
   card: {
     backgroundColor: C.white,
@@ -1987,7 +2390,7 @@ const styles = StyleSheet.create({
   },
   segment: {
     flexDirection: "row",
-    backgroundColor: "#E9EDE8",
+    backgroundColor: "#E7EAED",
     borderRadius: 13,
     padding: 4,
     alignSelf: "flex-start",
@@ -2008,7 +2411,7 @@ const styles = StyleSheet.create({
   formRow: { flexDirection: "row", gap: 13 },
   resultCard: {
     flex: 1,
-    backgroundColor: C.green,
+    backgroundColor: C.accentSurface,
     borderRadius: 18,
     padding: 28,
     minHeight: 290,
@@ -2024,10 +2427,10 @@ const styles = StyleSheet.create({
     fontSize: 42,
     fontWeight: "800",
     letterSpacing: -1.5,
-    color: C.white,
+    color: C.onAccent,
     marginTop: 12,
   },
-  resultText: { fontSize: 14, color: "#C9D8D2", marginTop: 8 },
+  resultText: { fontSize: 14, color: "#C0CBD5", marginTop: 8 },
   formula: {
     flexDirection: "row",
     alignItems: "center",
@@ -2037,9 +2440,9 @@ const styles = StyleSheet.create({
     padding: 13,
     marginTop: 30,
   },
-  formulaText: { fontSize: 11, color: "#D6E2DE", flex: 1 },
+  formulaText: { fontSize: 11, color: "#CAD3DC", flex: 1 },
   profileHero: {
-    backgroundColor: C.green,
+    backgroundColor: C.accentSurface,
     borderRadius: 18,
     padding: 23,
     flexDirection: "row",
@@ -2054,12 +2457,83 @@ const styles = StyleSheet.create({
     alignItems: "center",
     justifyContent: "center",
   },
-  profileInitials: { fontSize: 18, fontWeight: "900", color: C.green },
-  profileName: { fontSize: 20, fontWeight: "800", color: C.white },
-  profileSub: { fontSize: 12, color: "#C5D6D0", marginTop: 4 },
+  profileInitials: { fontSize: 18, fontWeight: "900", color: "#20262E" },
+  profileName: { fontSize: 20, fontWeight: "800", color: C.onAccent },
+  profileSub: { fontSize: 12, color: "#B8C4CF", marginTop: 4 },
+  vehicleTabs: {
+    flexDirection: "row",
+    flexWrap: "wrap",
+    gap: 8,
+    marginBottom: 18,
+  },
+  vehicleTab: {
+    minHeight: 38,
+    paddingHorizontal: 13,
+    borderRadius: 11,
+    borderWidth: 1,
+    borderColor: C.line,
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
+    gap: 6,
+  },
+  vehicleTabActive: {
+    backgroundColor: C.accentSurface,
+    borderColor: C.green,
+  },
+  vehicleTabText: { color: C.muted, fontSize: 12, fontWeight: "700" },
+  vehicleTabTextActive: { color: C.onAccent },
+  addVehicleTab: {
+    minHeight: 38,
+    paddingHorizontal: 12,
+    borderRadius: 11,
+    backgroundColor: C.mint,
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 5,
+  },
+  addVehicleText: { color: C.green, fontSize: 12, fontWeight: "800" },
+  vehicleTypeRow: {
+    flexDirection: "row",
+    gap: 9,
+    marginBottom: 18,
+    marginTop: 7,
+  },
+  vehicleTypeOption: {
+    flex: 1,
+    minHeight: 46,
+    borderWidth: 1,
+    borderColor: C.line,
+    borderRadius: 12,
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
+    gap: 7,
+  },
+  vehicleTypeOptionActive: {
+    backgroundColor: C.accentSurface,
+    borderColor: C.accentSurface,
+  },
+  vehicleTypeText: { color: C.muted, fontSize: 13, fontWeight: "800" },
+  vehicleTypeTextActive: { color: C.onAccent },
+  removeVehicle: {
+    flexDirection: "row",
+    alignItems: "center",
+    alignSelf: "flex-start",
+    gap: 7,
+    marginTop: 4,
+    paddingVertical: 8,
+  },
+  removeVehicleText: { color: C.red, fontSize: 12, fontWeight: "700" },
+  validationError: {
+    color: C.red,
+    fontSize: 13,
+    fontWeight: "700",
+    textAlign: "right",
+  },
   modalBackdrop: {
     flex: 1,
-    backgroundColor: "rgba(10,25,20,.52)",
+    backgroundColor: "rgba(5,9,14,.62)",
     alignItems: "center",
     justifyContent: "center",
     padding: 18,
@@ -2097,7 +2571,7 @@ const styles = StyleSheet.create({
     minHeight: 82,
     borderWidth: 1,
     borderStyle: "dashed",
-    borderColor: "#A9B8B1",
+    borderColor: "#AAB4BE",
     borderRadius: 14,
     marginVertical: 18,
     padding: 13,
@@ -2135,6 +2609,10 @@ const styles = StyleSheet.create({
     flexDirection: "row",
     paddingBottom: Platform.OS === "ios" ? 10 : 0,
   },
+  bottomNavDark: {
+    backgroundColor: "#111821",
+    borderTopColor: "#2B3542",
+  },
   bottomItem: {
     flex: 1,
     alignItems: "center",
@@ -2149,4 +2627,34 @@ const styles = StyleSheet.create({
     backgroundColor: C.cream,
   },
   loaderText: { fontSize: 13, color: C.muted, marginTop: 12 },
-});
+};
+
+const darkColorMap = {
+  ...Object.fromEntries(
+    Object.keys(LIGHT).map((key) => [LIGHT[key], DARK[key]]),
+  ),
+  "#6D7782": "#9AA7B5",
+  "#819089": "#8E9AA7",
+  "#829089": "#8E9AA7",
+  "#95A09A": "#8895A2",
+  "#B8C4CF": "#AAB6C2",
+  "#C0CBD5": "#B8C3CE",
+  "#CAD3DC": "#C7D0D9",
+  "#E7EAED": "#202B38",
+};
+
+function mapDarkStyles(value) {
+  if (Array.isArray(value)) return value.map(mapDarkStyles);
+  if (value && typeof value === "object") {
+    return Object.fromEntries(
+      Object.entries(value).map(([key, child]) => [key, mapDarkStyles(child)]),
+    );
+  }
+  return typeof value === "string" && darkColorMap[value]
+    ? darkColorMap[value]
+    : value;
+}
+
+const lightStyles = StyleSheet.create(styleDefinitions);
+const darkStyles = StyleSheet.create(mapDarkStyles(styleDefinitions));
+let styles = lightStyles;

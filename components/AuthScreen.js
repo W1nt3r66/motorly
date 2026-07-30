@@ -91,7 +91,7 @@ export default function AuthScreen() {
       <View style={styles.card}>
         <View style={styles.brandRow}>
           <View style={styles.logo}>
-            <Ionicons name="speedometer" size={29} color="#173F35" />
+            <Ionicons name="speedometer" size={29} color="#20262E" />
           </View>
           <Text style={styles.brand}>motorly</Text>
         </View>
@@ -173,7 +173,7 @@ export default function AuthScreen() {
 const styles = StyleSheet.create({
   safe: {
     flex: 1,
-    backgroundColor: "#F6F7F2",
+    backgroundColor: "#F1F3F5",
     alignItems: "center",
     justifyContent: "center",
     padding: 20,
@@ -185,13 +185,13 @@ const styles = StyleSheet.create({
     borderRadius: 24,
     padding: 32,
     borderWidth: 1,
-    borderColor: "#E2E6E1",
+    borderColor: "#D5DBE1",
   },
   logo: {
     width: 56,
     height: 56,
     borderRadius: 18,
-    backgroundColor: "#DDF06F",
+    backgroundColor: "#D8E65A",
     alignItems: "center",
     justifyContent: "center",
   },
@@ -203,17 +203,17 @@ const styles = StyleSheet.create({
   brand: {
     fontSize: 31,
     fontWeight: "900",
-    color: "#173F35",
+    color: "#456B8C",
     letterSpacing: -1,
   },
   title: {
     marginTop: 28,
     fontSize: 29,
     fontWeight: "900",
-    color: "#17211D",
+    color: "#20262E",
   },
   subtitle: {
-    color: "#69756F",
+    color: "#687482",
     fontSize: 14,
     lineHeight: 21,
     marginTop: 8,
@@ -222,17 +222,17 @@ const styles = StyleSheet.create({
   input: {
     height: 50,
     borderWidth: 1,
-    borderColor: "#D7DEDA",
+    borderColor: "#CBD3DA",
     borderRadius: 12,
     paddingHorizontal: 14,
     marginBottom: 12,
-    color: "#17211D",
-    backgroundColor: "#FAFBF8",
+    color: "#20262E",
+    backgroundColor: "#F7F8FA",
   },
   button: {
     height: 50,
     borderRadius: 12,
-    backgroundColor: "#173F35",
+    backgroundColor: "#456B8C",
     alignItems: "center",
     justifyContent: "center",
     marginTop: 8,
@@ -241,10 +241,10 @@ const styles = StyleSheet.create({
   buttonText: { color: "#FFFFFF", fontWeight: "800", fontSize: 15 },
   switchText: {
     textAlign: "center",
-    color: "#173F35",
+    color: "#456B8C",
     fontWeight: "700",
     marginTop: 20,
   },
   error: { color: "#B94242", marginBottom: 8 },
-  message: { color: "#28725E", marginBottom: 8 },
+  message: { color: "#456B8C", marginBottom: 8 },
 });
