@@ -988,12 +988,13 @@ function Calculators() {
   );
 }
 
-function Profile({ data, updateProfile }) {
+function Profile({ data, updateProfile, account, email, onSignOut }) {
   const { width } = useWindowDimensions();
   const compact = width < 800;
   const [owner, setOwner] = useState(data.owner);
   const [car, setCar] = useState(data.car);
   const [saved, setSaved] = useState(false);
+  const driverName = account?.display_name || owner.name;
   const save = () => {
     updateProfile(owner, car);
     setSaved(true);
@@ -1012,7 +1013,7 @@ function Profile({ data, updateProfile }) {
       <View style={styles.profileHero}>
         <View style={styles.profileAvatar}>
           <Text style={styles.profileInitials}>
-            {owner.name
+            {driverName
               .split(" ")
               .map((x) => x[0])
               .join("")
@@ -1021,7 +1022,10 @@ function Profile({ data, updateProfile }) {
           </Text>
         </View>
         <View style={{ flex: 1 }}>
-          <Text style={styles.profileName}>{owner.name}</Text>
+          <Text style={styles.profileName}>{driverName}</Text>
+          <Text style={styles.profileSub}>
+            @{account?.username || "setting-up"} · {email}
+          </Text>
           <Text style={styles.profileSub}>
             {car.make} {car.model} · {car.registration}
           </Text>
@@ -1101,7 +1105,17 @@ function Profile({ data, updateProfile }) {
           />
         </Card>
       </View>
-      <View style={{ alignItems: "flex-end" }}>
+      <View
+        style={{
+          flexDirection: "row",
+          justifyContent: "flex-end",
+          gap: 10,
+          flexWrap: "wrap",
+        }}
+      >
+        <Button onPress={onSignOut} icon="log-out-outline" secondary>
+          Sign out
+        </Button>
         <Button onPress={save} icon={saved ? "checkmark" : "save-outline"}>
           {saved ? "Saved" : "Save garage"}
         </Button>
@@ -1424,6 +1438,7 @@ export default function App() {
   const [loading, setLoading] = useState(true);
   const [session, setSession] = useState(null);
   const [authLoading, setAuthLoading] = useState(true);
+  const [account, setAccount] = useState(null);
   const [page, setPage] = useState("home");
   const [modal, setModal] = useState({ open: false, type: "fuel" });
 
@@ -1449,6 +1464,28 @@ export default function App() {
       subscription.unsubscribe();
     };
   }, []);
+
+  useEffect(() => {
+    if (!session?.user?.id) {
+      setAccount(null);
+      return undefined;
+    }
+
+    let active = true;
+
+    supabase
+      .from("profiles")
+      .select("username, display_name")
+      .eq("id", session.user.id)
+      .single()
+      .then(({ data: profile }) => {
+        if (active) setAccount(profile || null);
+      });
+
+    return () => {
+      active = false;
+    };
+  }, [session?.user?.id]);
 
   useEffect(() => {
     AsyncStorage.getItem(STORAGE_KEY)
@@ -1509,6 +1546,9 @@ export default function App() {
     ) : (
       <Profile
         data={data}
+        account={account}
+        email={session.user.email}
+        onSignOut={() => supabase.auth.signOut()}
         updateProfile={(owner, car) => persist({ ...data, owner, car })}
       />
     );
