@@ -19,6 +19,7 @@ import * as ImagePicker from "expo-image-picker";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import { Ionicons } from "@expo/vector-icons";
 import { supabase } from "./lib/supabase";
+import AuthScreen from "./components/AuthScreen";
 
 const C = {
   ink: "#17211D",
@@ -1421,8 +1422,34 @@ export default function App() {
   const isDesktop = width >= 900;
   const [data, setData] = useState(seed);
   const [loading, setLoading] = useState(true);
+  const [session, setSession] = useState(null);
+  const [authLoading, setAuthLoading] = useState(true);
   const [page, setPage] = useState("home");
   const [modal, setModal] = useState({ open: false, type: "fuel" });
+
+  useEffect(() => {
+    let mounted = true;
+
+    supabase.auth.getSession().then(({ data: { session: currentSession } }) => {
+      if (mounted) {
+        setSession(currentSession);
+        setAuthLoading(false);
+      }
+    });
+
+    const {
+      data: { subscription },
+    } = supabase.auth.onAuthStateChange((_event, nextSession) => {
+      setSession(nextSession);
+      setAuthLoading(false);
+    });
+
+    return () => {
+      mounted = false;
+      subscription.unsubscribe();
+    };
+  }, []);
+
   useEffect(() => {
     AsyncStorage.getItem(STORAGE_KEY)
       .then((raw) => {
@@ -1445,13 +1472,18 @@ export default function App() {
     });
   const remove = (list, id) =>
     persist({ ...data, [list]: data[list].filter((x) => x.id !== id) });
-  if (loading)
+  if (loading || authLoading)
     return (
       <View style={styles.loader}>
         <ActivityIndicator color={C.green} size="large" />
         <Text style={styles.loaderText}>Opening your garage…</Text>
       </View>
     );
+
+  if (!session) {
+    return <AuthScreen />;
+  }
+
   const body =
     page === "home" ? (
       <Overview
