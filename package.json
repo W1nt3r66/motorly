@@ -14,12 +14,14 @@
     "@expo/metro-runtime": "~57.0.3",
     "@expo/vector-icons": "^15.0.2",
     "@react-native-async-storage/async-storage": "^3.1.1",
+    "@supabase/supabase-js": "^2.111.0",
     "expo": "^57.0.4",
     "expo-image-picker": "~57.0.2",
     "expo-status-bar": "~57.0.0",
     "react": "19.2.7",
     "react-dom": "19.2.7",
     "react-native": "0.86.0",
+    "react-native-url-polyfill": "^4.0.0",
     "react-native-web": "^0.21.2"
   },
   "devDependencies": {
