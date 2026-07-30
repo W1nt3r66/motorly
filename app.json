@@ -1,0 +1,34 @@
+{
+  "expo": {
+    "name": "Motorly",
+    "slug": "motorly",
+    "version": "1.0.0",
+    "orientation": "portrait",
+    "userInterfaceStyle": "light",
+    "backgroundColor": "#F6F7F2",
+    "ios": {
+      "supportsTablet": true,
+      "bundleIdentifier": "com.motorly.app"
+    },
+    "android": {
+      "package": "com.motorly.app",
+      "adaptiveIcon": {
+        "backgroundColor": "#173F35"
+      },
+      "edgeToEdgeEnabled": true
+    },
+    "web": {
+      "bundler": "metro",
+      "output": "single",
+      "name": "Motorly"
+    },
+    "plugins": [
+      [
+        "expo-image-picker",
+        {
+          "photosPermission": "Motorly uses your photos to attach fuel receipts, service bills, and dashboard readings."
+        }
+      ]
+    ]
+  }
+}

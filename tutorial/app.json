@@ -1,0 +1,14 @@
+{
+  "expo": {
+    "name": "Motorly Tutorial",
+    "slug": "motorly-tutorial",
+    "version": "1.0.0",
+    "orientation": "portrait",
+    "userInterfaceStyle": "light",
+    "backgroundColor": "#F6F7F2",
+    "ios": { "supportsTablet": true, "bundleIdentifier": "com.example.motorly" },
+    "android": { "package": "com.example.motorly", "edgeToEdgeEnabled": true },
+    "web": { "bundler": "metro", "output": "single" },
+    "plugins": [["expo-image-picker", { "photosPermission": "Allow Motorly to attach receipts and dashboard photos." }]]
+  }
+}
