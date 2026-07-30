@@ -5,3 +5,10 @@ web-build/
 *.log
 .DS_Store
 .env.local
+
+# Local implementation snapshots
+App.gemini-entry.js
+App.walkie.js
+public/index.with-motorly-icon.html
+public/manifest.with-motorly-icon.json
+public/icons/motorly-source-cropped.png

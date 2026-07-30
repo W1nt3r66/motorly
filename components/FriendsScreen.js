@@ -6,6 +6,7 @@ import {
   StyleSheet,
   Text,
   TextInput,
+  useWindowDimensions,
   View,
 } from "react-native";
 import { Ionicons } from "@expo/vector-icons";
@@ -45,6 +46,8 @@ const colors = new Proxy(LIGHT, {
 });
 
 export default function FriendsScreen({ userId, darkMode }) {
+  const { width } = useWindowDimensions();
+  const compact = width < 620;
   friendNightMode = darkMode;
   styles = darkMode ? darkStyles : lightStyles;
   const [query, setQuery] = useState("");
@@ -75,9 +78,7 @@ export default function FriendsScreen({ userId, darkMode }) {
     const profileIds = [
       ...new Set(
         nextRelations.map((item) =>
-          item.requester_id === userId
-            ? item.addressee_id
-            : item.requester_id,
+          item.requester_id === userId ? item.addressee_id : item.requester_id,
         ),
       ),
     ];
@@ -107,6 +108,57 @@ export default function FriendsScreen({ userId, darkMode }) {
   useEffect(() => {
     loadFriends();
   }, [loadFriends]);
+
+  useEffect(() => {
+    const refresh = () => loadFriends();
+    const channel = supabase
+      .channel(`motorly-friendships-${userId}`)
+      .on(
+        "postgres_changes",
+        {
+          event: "INSERT",
+          schema: "public",
+          table: "friendships",
+          filter: `requester_id=eq.${userId}`,
+        },
+        refresh,
+      )
+      .on(
+        "postgres_changes",
+        {
+          event: "INSERT",
+          schema: "public",
+          table: "friendships",
+          filter: `addressee_id=eq.${userId}`,
+        },
+        refresh,
+      )
+      .on(
+        "postgres_changes",
+        {
+          event: "UPDATE",
+          schema: "public",
+          table: "friendships",
+          filter: `requester_id=eq.${userId}`,
+        },
+        refresh,
+      )
+      .on(
+        "postgres_changes",
+        {
+          event: "UPDATE",
+          schema: "public",
+          table: "friendships",
+          filter: `addressee_id=eq.${userId}`,
+        },
+        refresh,
+      )
+      .subscribe();
+
+    return () => {
+      supabase.removeChannel(channel);
+    };
+  }, [loadFriends, userId]);
 
   const relationshipFor = useCallback(
     (profileId) =>
@@ -149,13 +201,11 @@ export default function FriendsScreen({ userId, darkMode }) {
     setError("");
     setMessage("");
 
-    const { error: requestError } = await supabase
-      .from("friendships")
-      .insert({
-        requester_id: userId,
-        addressee_id: profile.id,
-        status: "pending",
-      });
+    const { error: requestError } = await supabase.from("friendships").insert({
+      requester_id: userId,
+      addressee_id: profile.id,
+      status: "pending",
+    });
 
     if (requestError) {
       setError(
@@ -172,10 +222,11 @@ export default function FriendsScreen({ userId, darkMode }) {
 
   const answerRequest = async (id, status) => {
     setError("");
-    const { error: answerError } = await supabase
-      .from("friendships")
-      .update({ status, updated_at: new Date().toISOString() })
-      .eq("id", id);
+    const request =
+      status === "declined"
+        ? supabase.from("friendships").delete().eq("id", id)
+        : supabase.from("friendships").update({ status }).eq("id", id);
+    const { error: answerError } = await request;
 
     if (answerError) {
       setError(answerError.message);
@@ -226,23 +277,16 @@ export default function FriendsScreen({ userId, darkMode }) {
       item.requester_id === userId ? item.addressee_id : item.requester_id
     ];
 
-  if (loading) {
-    return (
-      <View style={styles.loader}>
-        <ActivityIndicator color={colors.green} size="large" />
-        <Text style={styles.muted}>Loading your friends…</Text>
-      </View>
-    );
-  }
-
   return (
     <ScrollView
-      contentContainerStyle={styles.content}
+      contentContainerStyle={[styles.content, compact && styles.contentMobile]}
       showsVerticalScrollIndicator={false}
     >
       <View style={styles.intro}>
         <Text style={styles.eyebrow}>MOTORLY FRIENDS</Text>
-        <Text style={styles.title}>Drive better, together.</Text>
+        <Text style={[styles.title, compact && styles.titleMobile]}>
+          Drive better, together.
+        </Text>
         <Text style={styles.subtitle}>
           Find friends by username, compare vehicles, and invite them to a
           convoy.
@@ -254,8 +298,13 @@ export default function FriendsScreen({ userId, darkMode }) {
         <Text style={styles.searchSubtitle}>
           Search using their unique Motorly username.
         </Text>
-        <View style={styles.searchRow}>
-          <View style={styles.searchInputWrap}>
+        <View style={[styles.searchRow, compact && styles.searchRowMobile]}>
+          <View
+            style={[
+              styles.searchInputWrap,
+              compact && styles.searchInputWrapMobile,
+            ]}
+          >
             <Ionicons name="at" size={20} color={colors.muted} />
             <TextInput
               style={styles.searchInput}
@@ -273,6 +322,8 @@ export default function FriendsScreen({ userId, darkMode }) {
             icon="search"
             onPress={search}
             busy={searching}
+            secondary={compact}
+            style={compact && styles.searchButtonMobile}
           />
         </View>
 
@@ -425,6 +476,7 @@ function ActionButton({
   secondary,
   disabled,
   busy,
+  style,
 }) {
   return (
     <Pressable
@@ -434,12 +486,11 @@ function ActionButton({
         styles.button,
         secondary && styles.buttonSecondary,
         (disabled || busy) && styles.buttonDisabled,
+        style,
       ]}
     >
       {busy ? (
-        <ActivityIndicator
-          color={secondary ? colors.green : colors.onAccent}
-        />
+        <ActivityIndicator color={secondary ? colors.green : colors.onAccent} />
       ) : (
         <>
           {icon && (
@@ -450,10 +501,7 @@ function ActionButton({
             />
           )}
           <Text
-            style={[
-              styles.buttonText,
-              secondary && styles.buttonTextSecondary,
-            ]}
+            style={[styles.buttonText, secondary && styles.buttonTextSecondary]}
           >
             {title}
           </Text>
@@ -469,7 +517,7 @@ function EmptyState({ icon, title, text }) {
       <View style={styles.emptyIcon}>
         <Ionicons name={icon} size={26} color={colors.green} />
       </View>
-      <View>
+      <View style={styles.emptyCopy}>
         <Text style={styles.emptyTitle}>{title}</Text>
         <Text style={styles.muted}>{text}</Text>
       </View>
@@ -479,13 +527,15 @@ function EmptyState({ icon, title, text }) {
 
 const styleDefinitions = {
   content: {
-    padding: 38,
+    padding: 20,
+    paddingTop: 24,
     paddingBottom: 110,
     gap: 20,
     maxWidth: 1180,
     width: "100%",
     alignSelf: "center",
   },
+  contentMobile: { paddingHorizontal: 16, paddingTop: 20, gap: 16 },
   intro: {
     paddingVertical: 12,
   },
@@ -501,6 +551,7 @@ const styleDefinitions = {
     fontWeight: "900",
     marginTop: 8,
   },
+  titleMobile: { fontSize: 28, lineHeight: 33 },
   subtitle: {
     color: colors.muted,
     fontSize: 15,
@@ -540,6 +591,7 @@ const styleDefinitions = {
     gap: 10,
     marginTop: 18,
   },
+  searchRowMobile: { flexDirection: "column" },
   searchInputWrap: {
     flex: 1,
     minWidth: 170,
@@ -550,6 +602,11 @@ const styleDefinitions = {
     backgroundColor: colors.white,
     borderRadius: 12,
     paddingHorizontal: 14,
+  },
+  searchInputWrapMobile: {
+    flex: 0,
+    width: "100%",
+    minHeight: 50,
   },
   searchInput: {
     flex: 1,
@@ -618,6 +675,10 @@ const styleDefinitions = {
   buttonSecondary: {
     backgroundColor: colors.mint,
   },
+  searchButtonMobile: {
+    width: "100%",
+    minHeight: 48,
+  },
   buttonDisabled: {
     opacity: 0.55,
   },
@@ -634,6 +695,10 @@ const styleDefinitions = {
     alignItems: "center",
     gap: 13,
     paddingVertical: 16,
+  },
+  emptyCopy: {
+    flex: 1,
+    minWidth: 0,
   },
   emptyIcon: {
     width: 48,

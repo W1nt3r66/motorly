@@ -1,17 +1,26 @@
-import { useState } from "react";
+import { useRef, useState } from "react";
 import {
   ActivityIndicator,
+  KeyboardAvoidingView,
+  Platform,
   Pressable,
   SafeAreaView,
+  ScrollView,
   StyleSheet,
   Text,
   TextInput,
+  useWindowDimensions,
   View,
 } from "react-native";
 import { Ionicons } from "@expo/vector-icons";
 import { supabase } from "../lib/supabase";
 
 export default function AuthScreen() {
+  const { width } = useWindowDimensions();
+  const compact = width < 500;
+  const usernameRef = useRef(null);
+  const emailRef = useRef(null);
+  const passwordRef = useRef(null);
   const [mode, setMode] = useState("signin");
   const [form, setForm] = useState({
     displayName: "",
@@ -25,6 +34,30 @@ export default function AuthScreen() {
 
   const update = (field, value) => {
     setForm((current) => ({ ...current, [field]: value }));
+  };
+
+  const focusInput = (inputRef) => {
+    setTimeout(() => inputRef.current?.focus(), 0);
+  };
+
+  const focusNextOnTab = (event, nextRef) => {
+    const key = event.nativeEvent.key;
+
+    if ((key === "Tab" || key === "\t") && !event.nativeEvent.shiftKey) {
+      event.preventDefault();
+      focusInput(nextRef);
+    }
+  };
+
+  const updateAndFocusNextOnTab = (field, value, nextRef) => {
+    const valueWithoutTabs = value.replace(/\t/g, "");
+
+    update(field, valueWithoutTabs);
+
+    // Some native keyboards insert a tab without emitting an onKeyPress event.
+    if (valueWithoutTabs !== value) {
+      focusInput(nextRef);
+    }
   };
 
   const submit = async () => {
@@ -88,84 +121,133 @@ export default function AuthScreen() {
 
   return (
     <SafeAreaView style={styles.safe}>
-      <View style={styles.card}>
-        <View style={styles.brandRow}>
-          <View style={styles.logo}>
-            <Ionicons name="speedometer" size={29} color="#20262E" />
-          </View>
-          <Text style={styles.brand}>motorly</Text>
-        </View>
-
-        <Text style={styles.title}>
-          {mode === "signin" ? "Welcome back." : "Create your Motorly ID."}
-        </Text>
-        <Text style={styles.subtitle}>
-          {mode === "signin"
-            ? "Sign in to open your garage."
-            : "Your username lets friends find and invite you."}
-        </Text>
-
-        {mode === "signup" && (
-          <>
-            <TextInput
-              style={styles.input}
-              placeholder="Display name"
-              value={form.displayName}
-              onChangeText={(value) => update("displayName", value)}
-            />
-            <TextInput
-              style={styles.input}
-              placeholder="Unique username"
-              autoCapitalize="none"
-              value={form.username}
-              onChangeText={(value) => update("username", value)}
-            />
-          </>
-        )}
-
-        <TextInput
-          style={styles.input}
-          placeholder="Email address"
-          keyboardType="email-address"
-          autoCapitalize="none"
-          value={form.email}
-          onChangeText={(value) => update("email", value)}
-        />
-
-        <TextInput
-          style={styles.input}
-          placeholder="Password"
-          secureTextEntry
-          value={form.password}
-          onChangeText={(value) => update("password", value)}
-          onSubmitEditing={submit}
-        />
-
-        {!!error && <Text style={styles.error}>{error}</Text>}
-        {!!message && <Text style={styles.message}>{message}</Text>}
-
-        <Pressable
-          style={[styles.button, busy && styles.disabled]}
-          onPress={submit}
-          disabled={busy}
+      <KeyboardAvoidingView
+        style={styles.keyboard}
+        behavior={Platform.OS === "ios" ? "padding" : undefined}
+      >
+        <ScrollView
+          contentContainerStyle={styles.scrollContent}
+          keyboardShouldPersistTaps="handled"
+          showsVerticalScrollIndicator={false}
         >
-          {busy ? (
-            <ActivityIndicator color="#FFFFFF" />
-          ) : (
-            <Text style={styles.buttonText}>
-              {mode === "signin" ? "Sign in" : "Create account"}
-            </Text>
-          )}
-        </Pressable>
+          <View
+            style={[
+              styles.card,
+              compact && styles.cardCompact,
+              compact && { width: Math.max(width - 24, 280) },
+            ]}
+          >
+            <View style={styles.brandRow}>
+              <View style={[styles.logo, compact && styles.logoCompact]}>
+                <Ionicons
+                  name="speedometer"
+                  size={compact ? 25 : 29}
+                  color="#20262E"
+                />
+              </View>
+              <Text style={[styles.brand, compact && styles.brandCompact]}>
+                motorly
+              </Text>
+            </View>
 
-        <Pressable onPress={changeMode}>
-          <Text style={styles.switchText}>
-            {mode === "signin"
-              ? "New to Motorly? Create an account"
-              : "Already have an account? Sign in"}
-          </Text>
-        </Pressable>
-      </View>
+            <Text style={[styles.title, compact && styles.titleCompact]}>
+              {mode === "signin" ? "Welcome back." : "Create your Motorly ID."}
+            </Text>
+            <Text style={styles.subtitle}>
+              {mode === "signin"
+                ? "Sign in to open your garage."
+                : "Your username lets friends find and invite you."}
+            </Text>
+
+            {mode === "signup" && (
+              <>
+                <TextInput
+                  style={styles.input}
+                  placeholder="Display name"
+                  placeholderTextColor="#778493"
+                  value={form.displayName}
+                  onChangeText={(value) =>
+                    updateAndFocusNextOnTab("displayName", value, usernameRef)
+                  }
+                  returnKeyType="next"
+                  blurOnSubmit={false}
+                  onKeyPress={(event) => focusNextOnTab(event, usernameRef)}
+                  onSubmitEditing={() => focusInput(usernameRef)}
+                />
+                <TextInput
+                  ref={usernameRef}
+                  style={styles.input}
+                  placeholder="Unique username"
+                  placeholderTextColor="#778493"
+                  autoCapitalize="none"
+                  value={form.username}
+                  onChangeText={(value) =>
+                    updateAndFocusNextOnTab("username", value, emailRef)
+                  }
+                  returnKeyType="next"
+                  blurOnSubmit={false}
+                  onKeyPress={(event) => focusNextOnTab(event, emailRef)}
+                  onSubmitEditing={() => focusInput(emailRef)}
+                />
+              </>
+            )}
+
+            <TextInput
+              ref={emailRef}
+              style={styles.input}
+              placeholder="Email address"
+              placeholderTextColor="#778493"
+              keyboardType="email-address"
+              autoCapitalize="none"
+              value={form.email}
+              onChangeText={(value) =>
+                updateAndFocusNextOnTab("email", value, passwordRef)
+              }
+              returnKeyType="next"
+              blurOnSubmit={false}
+              onKeyPress={(event) => focusNextOnTab(event, passwordRef)}
+              onSubmitEditing={() => focusInput(passwordRef)}
+            />
+
+            <TextInput
+              ref={passwordRef}
+              style={styles.input}
+              placeholder="Password"
+              placeholderTextColor="#778493"
+              secureTextEntry
+              value={form.password}
+              onChangeText={(value) => update("password", value)}
+              returnKeyType="done"
+              onSubmitEditing={submit}
+            />
+
+            {!!error && <Text style={styles.error}>{error}</Text>}
+            {!!message && <Text style={styles.message}>{message}</Text>}
+
+            <Pressable
+              style={[styles.button, busy && styles.disabled]}
+              onPress={submit}
+              disabled={busy}
+            >
+              {busy ? (
+                <ActivityIndicator color="#FFFFFF" />
+              ) : (
+                <Text style={styles.buttonText}>
+                  {mode === "signin" ? "Sign in" : "Create account"}
+                </Text>
+              )}
+            </Pressable>
+
+            <Pressable onPress={changeMode}>
+              <Text style={styles.switchText}>
+                {mode === "signin"
+                  ? "New to Motorly? Create an account"
+                  : "Already have an account? Sign in"}
+              </Text>
+            </Pressable>
+          </View>
+        </ScrollView>
+      </KeyboardAvoidingView>
     </SafeAreaView>
   );
 }
@@ -173,20 +255,21 @@ export default function AuthScreen() {
 const styles = StyleSheet.create({
   safe: {
     flex: 1,
-    backgroundColor: "#F1F3F5",
+    backgroundColor: "#0B0E12",
+  },
+  keyboard: { flex: 1 },
+  scrollContent: {
+    flexGrow: 1,
     alignItems: "center",
     justifyContent: "center",
-    padding: 20,
+    paddingVertical: 24,
   },
   card: {
     width: "100%",
     maxWidth: 430,
-    backgroundColor: "#FFFFFF",
-    borderRadius: 24,
     padding: 32,
-    borderWidth: 1,
-    borderColor: "#D5DBE1",
   },
+  cardCompact: { padding: 20 },
   logo: {
     width: 56,
     height: 56,
@@ -195,6 +278,7 @@ const styles = StyleSheet.create({
     alignItems: "center",
     justifyContent: "center",
   },
+  logoCompact: { width: 50, height: 50, borderRadius: 16 },
   brandRow: {
     flexDirection: "row",
     alignItems: "center",
@@ -203,17 +287,19 @@ const styles = StyleSheet.create({
   brand: {
     fontSize: 31,
     fontWeight: "900",
-    color: "#456B8C",
+    color: "#8FAFD0",
     letterSpacing: -1,
   },
+  brandCompact: { fontSize: 27 },
   title: {
     marginTop: 28,
     fontSize: 29,
     fontWeight: "900",
-    color: "#20262E",
+    color: "#E7ECF2",
   },
+  titleCompact: { fontSize: 26, marginTop: 24 },
   subtitle: {
-    color: "#687482",
+    color: "#9AA7B5",
     fontSize: 14,
     lineHeight: 21,
     marginTop: 8,
@@ -222,12 +308,12 @@ const styles = StyleSheet.create({
   input: {
     height: 50,
     borderWidth: 1,
-    borderColor: "#CBD3DA",
+    borderColor: "#344252",
     borderRadius: 12,
     paddingHorizontal: 14,
     marginBottom: 12,
-    color: "#20262E",
-    backgroundColor: "#F7F8FA",
+    color: "#E7ECF2",
+    backgroundColor: "#101720",
   },
   button: {
     height: 50,
@@ -241,10 +327,10 @@ const styles = StyleSheet.create({
   buttonText: { color: "#FFFFFF", fontWeight: "800", fontSize: 15 },
   switchText: {
     textAlign: "center",
-    color: "#456B8C",
+    color: "#8FAFD0",
     fontWeight: "700",
     marginTop: 20,
   },
-  error: { color: "#B94242", marginBottom: 8 },
-  message: { color: "#456B8C", marginBottom: 8 },
+  error: { color: "#E07A6B", marginBottom: 8 },
+  message: { color: "#8FAFD0", marginBottom: 8 },
 });

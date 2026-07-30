@@ -4,8 +4,8 @@
     "slug": "motorly",
     "version": "1.0.0",
     "orientation": "portrait",
-    "userInterfaceStyle": "light",
-    "backgroundColor": "#F6F7F2",
+    "userInterfaceStyle": "dark",
+    "backgroundColor": "#111821",
     "ios": {
       "supportsTablet": true,
       "bundleIdentifier": "com.motorly.app"
@@ -20,13 +20,24 @@
     "web": {
       "bundler": "metro",
       "output": "single",
-      "name": "Motorly"
+      "name": "Motorly",
+      "shortName": "Motorly",
+      "description": "Fuel, expense, vehicle, route, and convoy analytics.",
+      "themeColor": "#111821",
+      "backgroundColor": "#111821",
+      "display": "standalone"
     },
     "plugins": [
       [
         "expo-image-picker",
         {
           "photosPermission": "Motorly uses your photos to attach fuel receipts, service bills, and dashboard readings."
+        }
+      ],
+      [
+        "expo-audio",
+        {
+          "microphonePermission": "Allow Motorly to use your microphone for walkie-talkie voice messages."
         }
       ]
     ]
