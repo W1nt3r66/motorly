@@ -9,6 +9,12 @@ web-build/
 # Local implementation snapshots
 App.gemini-entry.js
 App.walkie.js
+App.push-notifications.js
+App.push-account-switch.js
+components/AuthScreen.fixed.js
+components/CrewScreen.fixed.js
+components/WalkieScreen.fixed.js
+lib/pushNotifications.account-switch.js
 public/index.with-motorly-icon.html
 public/manifest.with-motorly-icon.json
 public/icons/motorly-source-cropped.png

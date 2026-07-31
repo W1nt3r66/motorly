@@ -15,6 +15,44 @@ import {
 import { Ionicons } from "@expo/vector-icons";
 import { supabase } from "../lib/supabase";
 
+function readableAuthError(error, mode) {
+  const message =
+    typeof error === "string"
+      ? error
+      : typeof error?.message === "string"
+        ? error.message.trim()
+        : "";
+  const normalized = message.toLowerCase();
+
+  if (normalized.includes("already registered")) {
+    return "An account already exists for this email. Try signing in instead.";
+  }
+
+  if (
+    normalized.includes("duplicate") ||
+    normalized.includes("username") ||
+    normalized.includes("database error saving new user")
+  ) {
+    return "That username may already be taken. Try a different unique username.";
+  }
+
+  if (normalized.includes("rate limit")) {
+    return "Too many attempts. Wait a few minutes and try again.";
+  }
+
+  if (normalized.includes("invalid login credentials")) {
+    return "Incorrect email or password.";
+  }
+
+  if (message && message !== "{}" && message !== "[object Object]") {
+    return message;
+  }
+
+  return mode === "signup"
+    ? "The account could not be created. Try another username or email."
+    : "Sign-in failed. Check your details and try again.";
+}
+
 export default function AuthScreen() {
   const { width } = useWindowDimensions();
   const compact = width < 500;
@@ -67,6 +105,37 @@ export default function AuthScreen() {
     const email = form.email.trim().toLowerCase();
     const username = form.username.trim().toLowerCase();
 
+    if (mode === "forgot") {
+      if (!email) {
+        setError("Enter your email address.");
+        return;
+      }
+
+      setBusy(true);
+      try {
+        const redirectTo =
+          Platform.OS === "web"
+            ? `${window.location.origin}/?passwordRecovery=1`
+            : undefined;
+        const { error: resetError } =
+          await supabase.auth.resetPasswordForEmail(email, { redirectTo });
+
+        if (resetError) {
+          setError(readableAuthError(resetError, mode));
+          return;
+        }
+
+        setMessage(
+          "If that email belongs to a Motorly account, a reset link is on its way.",
+        );
+      } catch (resetError) {
+        setError(readableAuthError(resetError, mode));
+      } finally {
+        setBusy(false);
+      }
+      return;
+    }
+
     if (!email || !form.password) {
       setError("Enter your email and password.");
       return;
@@ -84,32 +153,55 @@ export default function AuthScreen() {
 
     setBusy(true);
 
-    const result =
-      mode === "signup"
-        ? await supabase.auth.signUp({
-            email,
-            password: form.password,
-            options: {
-              data: {
-                username,
-                display_name: form.displayName.trim() || username,
-              },
-            },
-          })
-        : await supabase.auth.signInWithPassword({
-            email,
-            password: form.password,
+    try {
+      if (mode === "signup") {
+        const { data: usernameAvailable, error: availabilityError } =
+          await supabase.rpc("is_username_available", {
+            candidate: username,
           });
 
-    setBusy(false);
+        if (availabilityError) {
+          setError(
+            "Motorly could not check that username. Please try again.",
+          );
+          return;
+        }
 
-    if (result.error) {
-      setError(result.error.message);
-      return;
-    }
+        if (!usernameAvailable) {
+          setError("That username is already taken. Try another one.");
+          return;
+        }
+      }
 
-    if (mode === "signup" && !result.data.session) {
-      setMessage("Account created. Check your email to confirm your account.");
+      const result =
+        mode === "signup"
+          ? await supabase.auth.signUp({
+              email,
+              password: form.password,
+              options: {
+                data: {
+                  username,
+                  display_name: form.displayName.trim() || username,
+                },
+              },
+            })
+          : await supabase.auth.signInWithPassword({
+              email,
+              password: form.password,
+            });
+
+      if (result.error) {
+        setError(readableAuthError(result.error, mode));
+        return;
+      }
+
+      if (mode === "signup" && !result.data.session) {
+        setMessage("Account created. Check your email to confirm your account.");
+      }
+    } catch (submitError) {
+      setError(readableAuthError(submitError, mode));
+    } finally {
+      setBusy(false);
     }
   };
 
@@ -151,12 +243,18 @@ export default function AuthScreen() {
             </View>
 
             <Text style={[styles.title, compact && styles.titleCompact]}>
-              {mode === "signin" ? "Welcome back." : "Create your Motorly ID."}
+              {mode === "signin"
+                ? "Welcome back."
+                : mode === "signup"
+                  ? "Create your Motorly ID."
+                  : "Reset your password."}
             </Text>
             <Text style={styles.subtitle}>
               {mode === "signin"
                 ? "Sign in to open your garage."
-                : "Your username lets friends find and invite you."}
+                : mode === "signup"
+                  ? "Your username lets friends find and invite you."
+                  : "We’ll email you a secure link to choose a new password."}
             </Text>
 
             {mode === "signup" && (
@@ -209,17 +307,31 @@ export default function AuthScreen() {
               onSubmitEditing={() => focusInput(passwordRef)}
             />
 
-            <TextInput
-              ref={passwordRef}
-              style={styles.input}
-              placeholder="Password"
-              placeholderTextColor="#778493"
-              secureTextEntry
-              value={form.password}
-              onChangeText={(value) => update("password", value)}
-              returnKeyType="done"
-              onSubmitEditing={submit}
-            />
+            {mode !== "forgot" && (
+              <TextInput
+                ref={passwordRef}
+                style={styles.input}
+                placeholder="Password"
+                placeholderTextColor="#778493"
+                secureTextEntry
+                value={form.password}
+                onChangeText={(value) => update("password", value)}
+                returnKeyType="done"
+                onSubmitEditing={submit}
+              />
+            )}
+
+            {mode === "signin" && (
+              <Pressable
+                onPress={() => {
+                  setMode("forgot");
+                  setError("");
+                  setMessage("");
+                }}
+              >
+                <Text style={styles.forgotText}>Forgot password?</Text>
+              </Pressable>
+            )}
 
             {!!error && <Text style={styles.error}>{error}</Text>}
             {!!message && <Text style={styles.message}>{message}</Text>}
@@ -233,14 +345,30 @@ export default function AuthScreen() {
                 <ActivityIndicator color="#FFFFFF" />
               ) : (
                 <Text style={styles.buttonText}>
-                  {mode === "signin" ? "Sign in" : "Create account"}
+                  {mode === "signin"
+                    ? "Sign in"
+                    : mode === "signup"
+                      ? "Create account"
+                      : "Send reset link"}
                 </Text>
               )}
             </Pressable>
 
-            <Pressable onPress={changeMode}>
+            <Pressable
+              onPress={
+                mode === "forgot"
+                  ? () => {
+                      setMode("signin");
+                      setError("");
+                      setMessage("");
+                    }
+                  : changeMode
+              }
+            >
               <Text style={styles.switchText}>
-                {mode === "signin"
+                {mode === "forgot"
+                  ? "Back to sign in"
+                  : mode === "signin"
                   ? "New to Motorly? Create an account"
                   : "Already have an account? Sign in"}
               </Text>
@@ -330,6 +458,13 @@ const styles = StyleSheet.create({
     color: "#8FAFD0",
     fontWeight: "700",
     marginTop: 20,
+  },
+  forgotText: {
+    alignSelf: "flex-end",
+    color: "#8FAFD0",
+    fontWeight: "700",
+    marginTop: -2,
+    marginBottom: 4,
   },
   error: { color: "#E07A6B", marginBottom: 8 },
   message: { color: "#8FAFD0", marginBottom: 8 },

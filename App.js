@@ -20,15 +20,24 @@ import { StatusBar } from "expo-status-bar";
 import * as ImagePicker from "expo-image-picker";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import { Ionicons, MaterialCommunityIcons } from "@expo/vector-icons";
-import Svg, { Circle, Line, Path, Rect } from "react-native-svg";
+import Svg, { Circle, G, Line, Path, Rect } from "react-native-svg";
 import { supabase } from "./lib/supabase";
 import {
   loadGarageFromCloud,
   saveGarageToCloud,
   subscribeToGarage,
 } from "./lib/garageSync";
+import {
+  enableCrewPushNotifications,
+  getNotificationPermission,
+  isInstalledWebApp,
+  registerMotorlyServiceWorker,
+  supportsWebPush,
+} from "./lib/pushNotifications";
 import AuthScreen from "./components/AuthScreen";
 import CrewScreen from "./components/CrewScreen";
+import NewPasswordScreen from "./components/NewPasswordScreen";
+import AccountSettingsCard from "./components/AccountSettingsCard";
 
 const LIGHT = {
   ink: "#20262E",
@@ -1218,8 +1227,65 @@ function Expenses({ data, openAdd, remove, embedded = false }) {
 }
 
 const ORS_API_KEY = process.env.EXPO_PUBLIC_ORS_API_KEY;
+const PHOTON_API_URL = "https://photon.komoot.io/api/";
+const OSRM_API_URL = "https://router.project-osrm.org/route/v1/driving";
+
+function placeFromPhotonFeature(feature, fallbackLabel) {
+  const [longitude, latitude] = feature?.geometry?.coordinates || [];
+  const properties = feature?.properties || {};
+  const label = [
+    properties.name,
+    properties.city || properties.town || properties.village,
+    properties.state,
+  ]
+    .filter(Boolean)
+    .filter((value, index, values) => values.indexOf(value) === index)
+    .join(", ") || fallbackLabel;
+
+  if (!Number.isFinite(longitude) || !Number.isFinite(latitude)) return null;
+
+  return {
+    coordinates: [longitude, latitude],
+    label,
+    detail: [
+      properties.city || properties.town || properties.village,
+      properties.state,
+      properties.country,
+    ]
+      .filter(Boolean)
+      .filter((value, index, values) => values.indexOf(value) === index)
+      .join(", "),
+  };
+}
+
+async function photonPlaces(text, limit) {
+  const params = new URLSearchParams({
+    q: text,
+    limit: String(limit),
+  });
+  const response = await fetch(`${PHOTON_API_URL}?${params.toString()}`);
+  if (!response.ok) throw new Error("Place search failed.");
+  const payload = await response.json();
+  return (payload?.features || [])
+    .map((feature) =>
+      placeFromPhotonFeature(feature, text),
+    )
+    .filter(Boolean)
+    .filter((place) =>
+      place.detail.toLowerCase().includes("india"),
+    );
+}
 
 async function geocodeIndianPlace(place) {
+  try {
+    const photonMatches = await photonPlaces(place, 6);
+    if (photonMatches[0]) return photonMatches[0];
+  } catch {}
+
+  if (!ORS_API_KEY) {
+    throw new Error(`Could not find “${place}” in India.`);
+  }
+
   const params = new URLSearchParams({
     api_key: ORS_API_KEY,
     text: place,
@@ -1245,6 +1311,18 @@ async function geocodeIndianPlace(place) {
 }
 
 async function autocompleteIndianPlaces(text) {
+  try {
+    const photonMatches = await photonPlaces(text, 6);
+    if (photonMatches.length) {
+      return photonMatches.map((place, index) => ({
+        ...place,
+        id: `${place.coordinates.join(",")}-${place.label}-${index}`,
+      }));
+    }
+  } catch {}
+
+  if (!ORS_API_KEY) return [];
+
   const params = new URLSearchParams({
     api_key: ORS_API_KEY,
     text,
@@ -1278,6 +1356,25 @@ async function autocompleteIndianPlaces(text) {
 }
 
 async function getDrivingRoute(start, end) {
+  try {
+    const response = await fetch(
+      `${OSRM_API_URL}/${start.join(",")};${end.join(",")}?overview=full&geometries=geojson`,
+    );
+    const payload = await response.json();
+    const route = payload?.routes?.[0];
+    if (response.ok && route) {
+      return {
+        summary: {
+          distance: route.distance,
+          duration: route.duration,
+        },
+        coordinates: route.geometry?.coordinates || [],
+      };
+    }
+  } catch {}
+
+  if (!ORS_API_KEY) throw new Error("Route service is unavailable right now.");
+
   const params = new URLSearchParams({
     api_key: ORS_API_KEY,
     start: start.join(","),
@@ -1419,7 +1516,7 @@ const SAMPLE_ROUTE = [
   [88.058, 22.0667],
 ];
 
-function RouteMapPreview({ coordinates, preview, style }) {
+function RouteMapPreview({ coordinates, preview, from, to, style }) {
   const width = 500;
   const height = 500;
   const padding = 52;
@@ -1446,10 +1543,86 @@ function RouteMapPreview({ coordinates, preview, style }) {
   const routeHeight = latitudeRange * scale;
   const offsetX = (width - routeWidth) / 2;
   const offsetY = (height - routeHeight) / 2;
-  const points = sampled.map(([longitude, latitude]) => ({
+  const flatPoints = sampled.map(([longitude, latitude]) => ({
     x: offsetX + (longitude - minLongitude) * scale,
     y: height - (offsetY + (latitude - minLatitude) * scale),
   }));
+  const mercatorPoint = ([longitude, latitude], zoom) => {
+    const mapScale = 256 * 2 ** zoom;
+    const safeLatitude = Math.max(-85.0511, Math.min(85.0511, latitude));
+    const latitudeRadians = (safeLatitude * Math.PI) / 180;
+
+    return {
+      x: ((longitude + 180) / 360) * mapScale,
+      y:
+        ((1 -
+          Math.log(
+            Math.tan(latitudeRadians) + 1 / Math.cos(latitudeRadians),
+          ) /
+            Math.PI) /
+          2) *
+        mapScale,
+    };
+  };
+  let mapZoom = preview ? 4 : 14;
+
+  if (!preview) {
+    for (let candidate = 14; candidate >= 3; candidate -= 1) {
+      const northWest = mercatorPoint([minLongitude, maxLatitude], candidate);
+      const southEast = mercatorPoint([maxLongitude, minLatitude], candidate);
+      if (
+        southEast.x - northWest.x <= width - padding * 2 &&
+        southEast.y - northWest.y <= height - padding * 2
+      ) {
+        mapZoom = candidate;
+        break;
+      }
+    }
+  }
+
+  const mapCenter = preview
+    ? mercatorPoint([82.75, 21.1], mapZoom)
+    : (() => {
+        const northWest = mercatorPoint(
+          [minLongitude, maxLatitude],
+          mapZoom,
+        );
+        const southEast = mercatorPoint(
+          [maxLongitude, minLatitude],
+          mapZoom,
+        );
+        return {
+          x: (northWest.x + southEast.x) / 2,
+          y: (northWest.y + southEast.y) / 2,
+        };
+      })();
+  const mapLeft = mapCenter.x - width / 2;
+  const mapTop = mapCenter.y - height / 2;
+  const tileStartX = Math.floor(mapLeft / 256);
+  const tileEndX = Math.floor((mapLeft + width) / 256);
+  const tileStartY = Math.floor(mapTop / 256);
+  const tileEndY = Math.floor((mapTop + height) / 256);
+  const tileLimit = 2 ** mapZoom;
+  const mapTiles = [];
+
+  for (let tileY = tileStartY; tileY <= tileEndY; tileY += 1) {
+    for (let tileX = tileStartX; tileX <= tileEndX; tileX += 1) {
+      if (tileY < 0 || tileY >= tileLimit) continue;
+      const wrappedTileX = ((tileX % tileLimit) + tileLimit) % tileLimit;
+      mapTiles.push({
+        key: `${mapZoom}-${tileX}-${tileY}`,
+        uri: `https://tile.openstreetmap.org/${mapZoom}/${wrappedTileX}/${tileY}.png`,
+        left: tileX * 256 - mapLeft,
+        top: tileY * 256 - mapTop,
+      });
+    }
+  }
+
+  const mappedPoints = sampled.map((coordinate) => {
+    const point = mercatorPoint(coordinate, mapZoom);
+    return { x: point.x - mapLeft, y: point.y - mapTop };
+  });
+  const points = Platform.OS === "web" ? mappedPoints : flatPoints;
   const routePath = points
     .map((point, index) => `${index ? "L" : "M"} ${point.x} ${point.y}`)
     .join(" ");
@@ -1458,13 +1631,40 @@ function RouteMapPreview({ coordinates, preview, style }) {
 
   return (
     <View style={[styles.routeMapPreview, style]}>
+      {Platform.OS === "web" &&
+        mapTiles.map((tile) =>
+          React.createElement("img", {
+            key: tile.key,
+            src: tile.uri,
+            alt: "",
+            draggable: false,
+            style: {
+              position: "absolute",
+              left: tile.left,
+              top: tile.top,
+              width: 256,
+              height: 256,
+              maxWidth: "none",
+              userSelect: "none",
+              pointerEvents: "none",
+              filter: "saturate(0.88) contrast(0.96) brightness(0.94)",
+            },
+          }),
+        )}
       <Svg
         width="100%"
         height="100%"
         viewBox={`0 0 ${width} ${height}`}
         preserveAspectRatio="xMidYMid meet"
+        style={styles.routeMapLineOverlay}
       >
-        <Rect width={width} height={height} rx="16" fill="#263B4F" />
+        <Rect
+          width={width}
+          height={height}
+          rx="16"
+          fill={Platform.OS === "web" ? "transparent" : "#263B4F"}
+        />
+        <G opacity={Platform.OS === "web" ? 0 : 1}>
         <Path
           d="M -20 385 C 70 335, 145 365, 220 420 S 390 505, 535 435 L 535 540 L -20 540 Z"
           fill="#31576B"
@@ -1584,32 +1784,84 @@ function RouteMapPreview({ coordinates, preview, style }) {
         <Circle cx="420" cy="190" r="5" fill="#8FAFD0" opacity="0.72" />
         <Circle cx="193" cy="396" r="5" fill="#8FAFD0" opacity="0.65" />
         <Circle cx="452" cy="370" r="5" fill="#8FAFD0" opacity="0.65" />
-        <Path
-          d={routePath}
-          stroke="#101820"
-          strokeWidth="12"
-          strokeLinecap="round"
-          strokeLinejoin="round"
-          opacity="0.42"
-          fill="none"
-        />
-        <Path
-          d={routePath}
-          stroke="#D8E65A"
-          strokeWidth="6"
-          strokeLinecap="round"
-          strokeLinejoin="round"
-          fill="none"
-        />
-        <Circle cx={start.x} cy={start.y} r="10" fill="#F6F8FA" />
-        <Circle cx={start.x} cy={start.y} r="4" fill="#456B8C" />
-        <Circle cx={end.x} cy={end.y} r="11" fill="#D8E65A" />
-        <Circle cx={end.x} cy={end.y} r="4" fill="#202A36" />
+        </G>
+        {!preview && (
+          <>
+            <Path
+              d={routePath}
+              stroke="#101820"
+              strokeWidth="12"
+              strokeLinecap="round"
+              strokeLinejoin="round"
+              opacity="0.46"
+              fill="none"
+            />
+            <Path
+              d={routePath}
+              stroke="#D8E65A"
+              strokeWidth="6"
+              strokeLinecap="round"
+              strokeLinejoin="round"
+              fill="none"
+            />
+            <Circle cx={start.x} cy={start.y} r="10" fill="#F6F8FA" />
+            <Circle cx={start.x} cy={start.y} r="4" fill="#456B8C" />
+            <Circle cx={end.x} cy={end.y} r="11" fill="#D8E65A" />
+            <Circle cx={end.x} cy={end.y} r="4" fill="#202A36" />
+          </>
+        )}
       </Svg>
       <View style={styles.routeMapBadge}>
         <Ionicons name="navigate" size={12} color="#202A36" />
         <Text style={styles.routeMapBadgeText}>
           {preview ? "ROUTE PREVIEW" : "LIVE ROUTE SHAPE"}
+        </Text>
+      </View>
+      {!preview && (
+        <>
+          <View
+            style={[
+              styles.routeMapPlaceLabel,
+              {
+                left: `${Math.min(68, Math.max(3, (start.x / width) * 100))}%`,
+                top: `${Math.min(86, Math.max(12, (start.y / height) * 100))}%`,
+              },
+            ]}
+          >
+            <View
+              style={[styles.routeMapPlaceDot, { backgroundColor: "#456B8C" }]}
+            />
+            <View style={{ flex: 1 }}>
+              <Text style={styles.routeMapPlaceEyebrow}>START</Text>
+              <Text style={styles.routeMapPlaceText} numberOfLines={1}>
+                {from || "Starting point"}
+              </Text>
+            </View>
+          </View>
+          <View
+            style={[
+              styles.routeMapPlaceLabel,
+              {
+                left: `${Math.min(68, Math.max(3, (end.x / width) * 100))}%`,
+                top: `${Math.min(86, Math.max(12, (end.y / height) * 100))}%`,
+              },
+            ]}
+          >
+            <View
+              style={[styles.routeMapPlaceDot, { backgroundColor: "#D8E65A" }]}
+            />
+            <View style={{ flex: 1 }}>
+              <Text style={styles.routeMapPlaceEyebrow}>DESTINATION</Text>
+              <Text style={styles.routeMapPlaceText} numberOfLines={1}>
+                {to || "Destination"}
+              </Text>
+            </View>
+          </View>
+        </>
+      )}
+      <View style={styles.routeMapAttribution}>
+        <Text style={styles.routeMapAttributionText}>
+          © OpenStreetMap contributors
         </Text>
       </View>
     </View>
@@ -1817,6 +2069,8 @@ function Calculators({ vehicle, recordedMileage, userId }) {
             <RouteMapPreview
               coordinates={routeResult?.routeCoordinates}
               preview={!routeResult}
+              from={routeResult?.from}
+              to={routeResult?.to}
               style={styles.routeMapTopMobile}
             />
           )}
@@ -1829,7 +2083,7 @@ function Calculators({ vehicle, recordedMileage, userId }) {
             <Card style={compact ? styles.journeyFormMobile : { flex: 1.3 }}>
               <SectionTitle
                 title="Route and fuel calculator"
-                subtitle="Powered by openrouteservice and OpenStreetMap"
+                subtitle="Powered by open map data"
               />
               <RoutePlaceField
                 label="Starting point"
@@ -1990,6 +2244,8 @@ function Calculators({ vehicle, recordedMileage, userId }) {
                 <RouteMapPreview
                   coordinates={routeResult?.routeCoordinates}
                   preview={!routeResult}
+                  from={routeResult?.from}
+                  to={routeResult?.to}
                 />
               )}
               {routeLoading ? (
@@ -2162,7 +2418,7 @@ function Calculators({ vehicle, recordedMileage, userId }) {
   );
 }
 
-function Profile({ data, updateProfile, account, email }) {
+function Profile({ data, updateProfile, account, email, darkMode }) {
   const { width } = useWindowDimensions();
   const compact = width < 800;
   const [owner, setOwner] = useState({
@@ -2347,6 +2603,7 @@ function Profile({ data, updateProfile, account, email }) {
               onChangeText={(phone) => setOwner({ ...owner, phone })}
             />
           </Card>
+          <AccountSettingsCard darkMode={darkMode} />
         </>
       )}
 
@@ -3298,6 +3555,7 @@ export default function App() {
   const [loading, setLoading] = useState(true);
   const [session, setSession] = useState(null);
   const [authLoading, setAuthLoading] = useState(true);
+  const [passwordRecovery, setPasswordRecovery] = useState(false);
   const [account, setAccount] = useState(null);
   const [darkMode, setDarkMode] = useState(true);
   const [page, setPage] = useState("home");
@@ -3305,8 +3563,49 @@ export default function App() {
   const [crewNotification, setCrewNotification] = useState(null);
   const [notificationsOpen, setNotificationsOpen] = useState(false);
   const [notificationUnread, setNotificationUnread] = useState(false);
+  const [pushPermission, setPushPermission] = useState(() =>
+    getNotificationPermission(),
+  );
+  const [pushBusy, setPushBusy] = useState(false);
+  const [pushMessage, setPushMessage] = useState("");
   nightModeActive = darkMode;
   styles = darkMode ? darkStyles : lightStyles;
+
+  useEffect(() => {
+    if (Platform.OS !== "web" || !supportsWebPush()) {
+      return undefined;
+    }
+
+    registerMotorlyServiceWorker().catch(() => {});
+
+    const openCrewFromPush = () => {
+      setPage("crew");
+      window.history.replaceState({}, "", window.location.pathname);
+    };
+
+    const query = new URLSearchParams(window.location.search);
+    if (query.get("page") === "crew") {
+      openCrewFromPush();
+    }
+
+    const handleServiceWorkerMessage = (event) => {
+      if (event.data?.type === "MOTORLY_CREW_NOTIFICATION_OPENED") {
+        openCrewFromPush();
+      }
+    };
+
+    navigator.serviceWorker.addEventListener(
+      "message",
+      handleServiceWorkerMessage,
+    );
+
+    return () => {
+      navigator.serviceWorker.removeEventListener(
+        "message",
+        handleServiceWorkerMessage,
+      );
+    };
+  }, []);
 
   useEffect(() => {
     let mounted = true;
@@ -3320,9 +3619,12 @@ export default function App() {
 
     const {
       data: { subscription },
-    } = supabase.auth.onAuthStateChange((_event, nextSession) => {
+    } = supabase.auth.onAuthStateChange((event, nextSession) => {
       setSession(nextSession);
       setAuthLoading(false);
+      if (event === "PASSWORD_RECOVERY") {
+        setPasswordRecovery(true);
+      }
     });
 
     return () => {
@@ -3653,6 +3955,24 @@ export default function App() {
     setNotificationsOpen(false);
     setPage("crew");
   };
+  const enablePushNotifications = async () => {
+    setPushBusy(true);
+    setPushMessage("");
+
+    try {
+      await enableCrewPushNotifications(session?.user?.id);
+      setPushPermission(getNotificationPermission());
+      setPushMessage("Crew push notifications are enabled on this device.");
+    } catch (pushError) {
+      setPushPermission(getNotificationPermission());
+      setPushMessage(pushError.message || "Could not enable notifications.");
+    } finally {
+      setPushBusy(false);
+    }
+  };
+  const signOut = async () => {
+    await supabase.auth.signOut();
+  };
   if (loading || authLoading)
     return (
       <View style={styles.loader}>
@@ -3663,6 +3983,17 @@ export default function App() {
 
   if (!session) {
     return <AuthScreen />;
+  }
+
+  if (passwordRecovery) {
+    return (
+      <NewPasswordScreen
+        onComplete={() => {
+          setPasswordRecovery(false);
+          setPage("home");
+        }}
+      />
+    );
   }
 
   const body =
@@ -3702,6 +4033,7 @@ export default function App() {
         data={data}
         account={account}
         email={session.user.email}
+        darkMode={darkMode}
         updateProfile={updateProfile}
       />
     );
@@ -3728,7 +4060,7 @@ export default function App() {
         onToggleDarkMode={toggleDarkMode}
         onNotifications={openNotifications}
         notificationUnread={notificationUnread}
-        onSignOut={() => supabase.auth.signOut()}
+        onSignOut={signOut}
         onAdd={() =>
           setModal({
             open: true,
@@ -3771,6 +4103,69 @@ export default function App() {
                 icon="close"
                 onPress={() => setNotificationsOpen(false)}
               />
+            </View>
+            <View style={styles.pushPermissionCard}>
+              <View style={styles.pushPermissionIcon}>
+                <Ionicons
+                  name={
+                    pushPermission === "granted"
+                      ? "notifications"
+                      : "notifications-outline"
+                  }
+                  size={21}
+                  color={C.green}
+                />
+              </View>
+              <View style={styles.pushPermissionContent}>
+                <Text style={styles.pushPermissionTitle}>
+                  {pushPermission === "granted"
+                    ? "Push notifications enabled"
+                    : "Get crew alerts"}
+                </Text>
+                <Text style={styles.pushPermissionText}>
+                  {pushPermission === "granted"
+                    ? "Motorly can alert you when a friend adds you to a crew."
+                    : Platform.OS === "web" && !isInstalledWebApp()
+                      ? "On iPhone, add Motorly to the Home Screen first, then enable alerts from there."
+                      : "Enable alerts so you know when a friend adds you to a crew."}
+                </Text>
+                {pushMessage ? (
+                  <Text
+                    style={[
+                      styles.pushPermissionMessage,
+                      pushPermission === "granted" &&
+                        styles.pushPermissionMessageSuccess,
+                    ]}
+                  >
+                    {pushMessage}
+                  </Text>
+                ) : null}
+                {pushPermission !== "granted" ? (
+                  <TouchableOpacity
+                    disabled={pushBusy}
+                    onPress={enablePushNotifications}
+                    style={[
+                      styles.pushPermissionButton,
+                      pushBusy && styles.pushPermissionButtonDisabled,
+                    ]}
+                  >
+                    {pushBusy ? (
+                      <ActivityIndicator size="small" color={C.onAccent} />
+                    ) : (
+                      <>
+                        <Ionicons
+                          name="notifications-outline"
+                          size={17}
+                          color={C.onAccent}
+                        />
+                        <Text style={styles.pushPermissionButtonText}>
+                          Enable notifications
+                        </Text>
+                      </>
+                    )}
+                  </TouchableOpacity>
+                ) : null}
+              </View>
             </View>
             {crewNotification ? (
               <TouchableOpacity
@@ -3873,6 +4268,68 @@ const styleDefinitions = {
     fontSize: 21,
     fontWeight: "900",
     marginTop: 3,
+  },
+  pushPermissionCard: {
+    flexDirection: "row",
+    gap: 12,
+    padding: 15,
+    borderRadius: 18,
+    borderWidth: 1,
+    borderColor: C.line,
+    backgroundColor: C.mint,
+    marginBottom: 13,
+  },
+  pushPermissionIcon: {
+    width: 38,
+    height: 38,
+    borderRadius: 19,
+    alignItems: "center",
+    justifyContent: "center",
+    backgroundColor: C.white,
+  },
+  pushPermissionContent: {
+    flex: 1,
+  },
+  pushPermissionTitle: {
+    color: C.ink,
+    fontSize: 15,
+    fontWeight: "900",
+  },
+  pushPermissionText: {
+    color: C.muted,
+    fontSize: 13,
+    lineHeight: 19,
+    marginTop: 3,
+  },
+  pushPermissionMessage: {
+    color: C.red,
+    fontSize: 12,
+    lineHeight: 17,
+    marginTop: 8,
+    fontWeight: "700",
+  },
+  pushPermissionMessageSuccess: {
+    color: C.green,
+  },
+  pushPermissionButton: {
+    minHeight: 42,
+    alignSelf: "flex-start",
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
+    gap: 7,
+    paddingHorizontal: 14,
+    borderRadius: 13,
+    backgroundColor: C.accentSurface,
+    marginTop: 11,
+  },
+  pushPermissionButtonDisabled: {
+    opacity: 0.65,
+  },
+  pushPermissionButtonText: {
+    color: C.onAccent,
+    fontSize: 13,
+    fontWeight: "900",
   },
   crewNotificationCard: {
     flexDirection: "row",
@@ -4914,12 +5371,69 @@ const styleDefinitions = {
     paddingHorizontal: 9,
     paddingVertical: 6,
     backgroundColor: C.lime,
+    zIndex: 3,
   },
   routeMapBadgeText: {
     fontSize: 8,
     letterSpacing: 0.8,
     fontWeight: "900",
     color: "#202A36",
+  },
+  routeMapPlaceLabel: {
+    position: "absolute",
+    width: 150,
+    minHeight: 36,
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 7,
+    paddingHorizontal: 9,
+    paddingVertical: 6,
+    borderRadius: 9,
+    backgroundColor: "rgba(16, 24, 32, 0.9)",
+    borderWidth: 1,
+    borderColor: "rgba(216, 230, 90, 0.5)",
+    zIndex: 3,
+  },
+  routeMapPlaceDot: {
+    width: 9,
+    height: 9,
+    borderRadius: 5,
+    borderWidth: 2,
+    borderColor: "#F6F8FA",
+  },
+  routeMapPlaceEyebrow: {
+    color: "#9AA7B5",
+    fontSize: 6,
+    fontWeight: "900",
+    letterSpacing: 0.8,
+  },
+  routeMapPlaceText: {
+    color: "#F3F6FA",
+    fontSize: 8,
+    lineHeight: 11,
+    fontWeight: "800",
+    marginTop: 1,
+  },
+  routeMapLineOverlay: {
+    position: "absolute",
+    inset: 0,
+    zIndex: 2,
+    pointerEvents: "none",
+  },
+  routeMapAttribution: {
+    position: "absolute",
+    right: 5,
+    bottom: 4,
+    borderRadius: 5,
+    paddingHorizontal: 5,
+    paddingVertical: 2,
+    backgroundColor: "rgba(255,255,255,0.88)",
+    zIndex: 3,
+  },
+  routeMapAttributionText: {
+    color: "#33404A",
+    fontSize: 7,
+    fontWeight: "700",
   },
   routeResultEyebrow: {
     fontSize: 9,

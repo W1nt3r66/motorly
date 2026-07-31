@@ -21,6 +21,7 @@ import {
   useAudioRecorderState,
 } from "expo-audio";
 import AsyncStorage from "@react-native-async-storage/async-storage";
+import { Ionicons } from "@expo/vector-icons";
 import { supabase } from "../lib/supabase";
 
 const MAX_CREW_SIZE = 10;

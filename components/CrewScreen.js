@@ -3,6 +3,7 @@ import { Pressable, StyleSheet, Text, View } from "react-native";
 import { Ionicons } from "@expo/vector-icons";
 import FriendsScreen from "./FriendsScreen";
 import WalkieScreen from "./WalkieScreen";
+import CreateCrewScreen from "./CreateCrewScreen";
 import { supabase } from "../lib/supabase";
 
 export default function CrewScreen({ userId, darkMode = true }) {
@@ -77,6 +78,12 @@ export default function CrewScreen({ userId, darkMode = true }) {
     setSection((current) =>
       room ? "walkie" : current === "walkie" ? "friends" : current,
     );
+  }, []);
+
+  const handleCrewCreated = useCallback((room) => {
+    setActiveRoom(room);
+    setMembershipChecked(true);
+    setSection("walkie");
   }, []);
 
   return (
@@ -157,12 +164,20 @@ export default function CrewScreen({ userId, darkMode = true }) {
       <View style={styles.body}>
         {section === "friends" ? (
           <FriendsScreen userId={userId} darkMode={darkMode} />
-        ) : (
+        ) : section === "create" && !activeRoom ? (
+          <CreateCrewScreen
+            userId={userId}
+            darkMode={darkMode}
+            onCreated={handleCrewCreated}
+          />
+        ) : activeRoom ? (
           <WalkieScreen
             userId={userId}
             darkMode={darkMode}
             onRoomChange={handleRoomChange}
           />
+        ) : (
+          <FriendsScreen userId={userId} darkMode={darkMode} />
         )}
       </View>
     </View>
