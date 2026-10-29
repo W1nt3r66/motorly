@@ -300,9 +300,21 @@ function Card({ children, style }) {
 
 function Pill({ children, tone = "green" }) {
   const bg =
-    tone === "orange" ? "#FBE9D8" : tone === "blue" ? "#E4EEF2" : C.mint;
+    tone === "orange"
+      ? "#FBE9D8"
+      : tone === "blue"
+      ? "#E4EEF2"
+      : tone === "cyan"
+      ? "#D4EFF2"
+      : C.mint;
   const color =
-    tone === "orange" ? "#9A5B1F" : tone === "blue" ? "#46697A" : C.green;
+    tone === "orange"
+      ? "#9A5B1F"
+      : tone === "blue"
+      ? "#46697A"
+      : tone === "cyan"
+      ? "#1F6B75"
+      : C.green;
   return (
     <View style={[styles.pill, { backgroundColor: bg }]}>
       <Text style={[styles.pillText, { color }]}>{children}</Text>
@@ -349,6 +361,64 @@ function Empty({ icon, title, text }) {
       </View>
       <Text style={styles.emptyTitle}>{title}</Text>
       <Text style={styles.emptyText}>{text}</Text>
+    </Card>
+  );
+}
+
+function WashReminderCard({ expenses = [], onAddWash }) {
+  const washEntries = useMemo(() => {
+    return expenses
+      .filter((e) =>
+        e.category?.toLowerCase().includes("wash") ||
+        e.description?.toLowerCase().includes("wash")
+      )
+      .sort((a, b) => b.date.localeCompare(a.date));
+  }, [expenses]);
+
+  const latestWash = washEntries[0];
+  const nextWashDate = latestWash?.nextWashDate;
+
+  if (!latestWash && !nextWashDate) return null;
+
+  const calculateDaysLeft = (targetDate) => {
+    const diff = new Date(`${targetDate}T00:00:00`) - new Date();
+    return Math.ceil(diff / (1000 * 60 * 60 * 24));
+  };
+
+  const daysLeft = nextWashDate ? calculateDaysLeft(nextWashDate) : null;
+  const isDue = daysLeft !== null && daysLeft <= 0;
+
+  return (
+    <Card
+      style={[
+        styles.washReminderCard,
+        isDue && { borderColor: C.orange, backgroundColor: "#FFF8F2" },
+      ]}
+    >
+      <View style={styles.washReminderIconWrap}>
+        <Ionicons
+          name="water"
+          size={24}
+          color={isDue ? C.orange : C.green}
+        />
+      </View>
+      <View style={{ flex: 1 }}>
+        <Text style={styles.washReminderTitle}>
+          {isDue
+            ? "Car wash is due!"
+            : nextWashDate
+            ? `Next wash due in ${daysLeft} day${daysLeft === 1 ? "" : "s"}`
+            : "Car wash status"}
+        </Text>
+        <Text style={styles.washReminderText}>
+          Last wash on {shortDate(latestWash.date)}
+          {latestWash.washDuration ? ` (${latestWash.washDuration} mins)` : ""}
+          {nextWashDate ? ` · Scheduled for ${shortDate(nextWashDate)}` : ""}
+        </Text>
+      </View>
+      <Button small secondary onPress={onAddWash} icon="add">
+        Log wash
+      </Button>
     </Card>
   );
 }
@@ -583,6 +653,7 @@ function Overview({
   ]
     .sort((a, b) => b.date.localeCompare(a.date))
     .slice(0, 5);
+
   return (
     <ScrollView
       contentContainerStyle={styles.content}
@@ -602,7 +673,7 @@ function Overview({
                 : "Your car, in a nutshell."}
           </Text>
           <Text style={styles.heroText}>
-            Every fill-up and expense, organized into a clearer view of
+            Every fill-up, expense and wash, organized into a clearer view of
             ownership.
           </Text>
         </View>
@@ -629,6 +700,12 @@ function Overview({
           </View>
         </View>
       </View>
+
+      <WashReminderCard
+        expenses={data.expenses}
+        onAddWash={() => openAdd("expense", "Car Wash")}
+      />
+
       <View style={styles.metricsRow}>
         <Metric
           icon="speedometer-outline"
@@ -786,7 +863,7 @@ function Overview({
           <Card>
             <SectionTitle
               title="Recent activity"
-              subtitle="Your latest fuel and ownership records"
+              subtitle="Your latest fuel, wash and ownership records"
               action="See expenses"
               onAction={() => setPage("logs")}
             />
@@ -819,18 +896,38 @@ function Overview({
 
 function ActivityRow({ item, last }) {
   const fuel = item.kind === "Fuel";
+  const isWash = item.kind?.toLowerCase().includes("wash");
+
   return (
     <View style={[styles.activityRow, last && { borderBottomWidth: 0 }]}>
       <View
         style={[
           styles.activityIcon,
-          { backgroundColor: fuel ? C.mint : "#FBE9D8" },
+          {
+            backgroundColor: fuel
+              ? C.mint
+              : isWash
+              ? "#D4EFF2"
+              : "#FBE9D8",
+          },
         ]}
       >
         <Ionicons
-          name={fuel ? "water-outline" : "receipt-outline"}
+          name={
+            fuel
+              ? "water-outline"
+              : isWash
+              ? "water"
+              : "receipt-outline"
+          }
           size={20}
-          color={fuel ? C.green : C.orange}
+          color={
+            fuel
+              ? C.green
+              : isWash
+              ? "#1F6B75"
+              : C.orange
+          }
         />
       </View>
       <View style={{ flex: 1 }}>
@@ -844,6 +941,7 @@ function ActivityRow({ item, last }) {
         </View>
         <Text style={styles.activityMeta}>
           {shortDate(item.date)} · {number(item.odometer, 0)} km · {item.kind}
+          {item.washDuration ? ` · ${item.washDuration} mins duration` : ""}
         </Text>
       </View>
     </View>
@@ -937,7 +1035,7 @@ function LogsScreen({ data, openAdd, remove }) {
           <View>
             <Text style={styles.logsTitle}>Logs</Text>
             <Text style={styles.logsSubtitle}>
-              Fuel, service and ownership records.
+              Fuel, service, wash and ownership records.
             </Text>
           </View>
 
@@ -1114,11 +1212,17 @@ function Expenses({ data, openAdd, remove, embedded = false }) {
         <PageIntro
           eyebrow="COST OF OWNERSHIP"
           title="Know where the money goes."
-          text="Keep service bills, insurance, repairs, parking, tolls, and every other car expense together."
+          text="Keep service bills, car washes, insurance, repairs, parking, and tolls organized."
           action="Add expense"
           onAction={() => openAdd("expense")}
         />
       )}
+
+      <WashReminderCard
+        expenses={data.expenses}
+        onAddWash={() => openAdd("expense", "Car Wash")}
+      />
+
       <View>
         <Card>
           <SectionTitle
@@ -1152,7 +1256,7 @@ function Expenses({ data, openAdd, remove, embedded = false }) {
             <Empty
               icon="receipt-outline"
               title="No expenses yet"
-              text="Add a service bill or car expense to see a breakdown."
+              text="Add a service bill, car wash, or car expense to see a breakdown."
             />
           )}
         </Card>
@@ -1160,7 +1264,7 @@ function Expenses({ data, openAdd, remove, embedded = false }) {
       <Card>
         <SectionTitle
           title="Expense history"
-          subtitle="Service, maintenance, and ownership records"
+          subtitle="Service, wash, maintenance, and ownership records"
         />
         {!sorted.length && (
           <Empty
@@ -1169,49 +1273,67 @@ function Expenses({ data, openAdd, remove, embedded = false }) {
             text="Add an expense manually or attach a bill."
           />
         )}
-        {sorted.map((item, i) => (
-          <View
-            key={item.id}
-            style={[
-              styles.logRow,
-              compact && styles.logRowMobile,
-              i === sorted.length - 1 && { borderBottomWidth: 0 },
-            ]}
-          >
-            <View style={[styles.activityIcon, { backgroundColor: "#FBE9D8" }]}>
-              <Ionicons name="construct-outline" size={20} color={C.orange} />
-            </View>
-            <View style={{ flex: 1 }}>
+        {sorted.map((item, i) => {
+          const isWash = item.category?.toLowerCase().includes("wash");
+          return (
+            <View
+              key={item.id}
+              style={[
+                styles.logRow,
+                compact && styles.logRowMobile,
+                i === sorted.length - 1 && { borderBottomWidth: 0 },
+              ]}
+            >
               <View
-                style={{
-                  flexDirection: "row",
-                  gap: 8,
-                  alignItems: "center",
-                  flexWrap: "wrap",
-                }}
+                style={[
+                  styles.activityIcon,
+                  { backgroundColor: isWash ? "#D4EFF2" : "#FBE9D8" },
+                ]}
               >
-                <Text style={styles.logTitle}>{item.description}</Text>
-                <Pill tone="orange">{item.category}</Pill>
+                <Ionicons
+                  name={isWash ? "water" : "construct-outline"}
+                  size={20}
+                  color={isWash ? "#1F6B75" : C.orange}
+                />
               </View>
-              <Text style={styles.logMeta}>
-                {shortDate(item.date)} · {item.workshop || "No vendor"} ·{" "}
-                {number(item.odometer, 0)} km
-              </Text>
-            </View>
-            <Text style={styles.logAmount}>{money(item.amount)}</Text>
-            {(item.photoPath || item.photo) && (
-              <EntryImage
-                storagePath={item.photoPath}
-                legacyUri={item.photo}
-                label="Expense receipt"
+              <View style={{ flex: 1 }}>
+                <View
+                  style={{
+                    flexDirection: "row",
+                    gap: 8,
+                    alignItems: "center",
+                    flexWrap: "wrap",
+                  }}
+                >
+                  <Text style={styles.logTitle}>{item.description}</Text>
+                  <Pill tone={isWash ? "cyan" : "orange"}>{item.category}</Pill>
+                  {item.washDuration ? (
+                    <Pill tone="blue">{item.washDuration} mins</Pill>
+                  ) : null}
+                </View>
+                <Text style={styles.logMeta}>
+                  {shortDate(item.date)} · {item.workshop || "No vendor"} ·{" "}
+                  {number(item.odometer, 0)} km
+                  {item.nextWashDate
+                    ? ` · Reminder: ${shortDate(item.nextWashDate)}`
+                    : ""}
+                </Text>
+              </View>
+              <Text style={styles.logAmount}>{money(item.amount)}</Text>
+              {(item.photoPath || item.photo) && (
+                <EntryImage
+                  storagePath={item.photoPath}
+                  legacyUri={item.photo}
+                  label="Expense receipt"
+                />
+              )}
+              <IconButton
+                icon="trash-outline"
+                onPress={() => remove("expenses", item.id)}
               />
-            )}
-            <IconButton
-              icon="trash-outline"
-              onPress={() => remove("expenses", item.id)}
-            />
-          </View>
-        ))}
+            </View>
+          );
+        })}
       </Card>
     </ScrollView>
   );
@@ -2686,6 +2808,7 @@ function FormField({
 function EntryModal({
   visible,
   type,
+  defaultCategory,
   onClose,
   onSave,
   vehicle,
@@ -2701,9 +2824,11 @@ function EntryModal({
     amount: "",
     station: "",
     note: "Full tank",
-    category: "Service",
+    category: defaultCategory || "Service",
     workshop: "",
     description: "",
+    washDuration: "",
+    washReminderDays: "14",
     photo: "",
     odometerPhoto: "",
   });
@@ -2711,6 +2836,7 @@ function EntryModal({
   const [scanProgress, setScanProgress] = useState(0);
   const [scanMessage, setScanMessage] = useState("");
   const [savingRecord, setSavingRecord] = useState(false);
+
   useEffect(() => {
     setKind(type || "fuel");
     setForm({
@@ -2720,9 +2846,11 @@ function EntryModal({
       amount: "",
       station: "",
       note: "Full tank",
-      category: "Service",
+      category: defaultCategory || (type === "expense" ? "Service" : ""),
       workshop: "",
-      description: "",
+      description: defaultCategory === "Car Wash" ? "Exterior + Interior wash" : "",
+      washDuration: defaultCategory === "Car Wash" ? "45" : "",
+      washReminderDays: "14",
       photo: "",
       odometerPhoto: "",
     });
@@ -2730,7 +2858,7 @@ function EntryModal({
     setScanProgress(0);
     setScanMessage("");
     setSavingRecord(false);
-  }, [visible, type]);
+  }, [visible, type, defaultCategory]);
 
   const recognizeImage = async (imageBase64, mimeType, imageKind) => {
     setScanning(imageKind);
@@ -2829,10 +2957,13 @@ function EntryModal({
       imageKind,
     );
   };
+
+  const isWashCategory = form.category?.toLowerCase().includes("wash");
+
   const valid =
     form.date &&
     Number(form.odometer) > 0 &&
-    Number(form.amount) > 0 &&
+    Number(form.amount) >= 0 &&
     (kind === "expense" || Number(form.liters) > 0);
 
   const entryWarnings = useMemo(() => {
@@ -2899,20 +3030,30 @@ function EntryModal({
   const commitSave = async () => {
     setSavingRecord(true);
     try {
+      let nextWashDate = null;
+      if (isWashCategory && Number(form.washReminderDays) > 0) {
+        const d = new Date(`${form.date}T00:00:00`);
+        d.setDate(d.getDate() + Number(form.washReminderDays));
+        nextWashDate = d.toISOString().slice(0, 10);
+      }
+
       await onSave(kind, {
         ...form,
         odometer: Number(form.odometer),
         amount: Number(form.amount),
         liters: Number(form.liters || 0),
+        washDuration: isWashCategory ? Number(form.washDuration || 0) : null,
+        nextWashDate,
         id: `${kind[0]}${Date.now()}`,
       });
       onClose();
     } catch {
-      // The save handler displays the upload or persistence error.
+      // Handled by caller
     } finally {
       setSavingRecord(false);
     }
   };
+
   const save = () => {
     if (!entryWarnings.length) {
       commitSave();
@@ -2928,6 +3069,7 @@ function EntryModal({
       { text: "Save anyway", onPress: commitSave },
     ]);
   };
+
   return (
     <Modal
       visible={visible}
@@ -2941,7 +3083,7 @@ function EntryModal({
             <View>
               <Text style={styles.modalEyebrow}>NEW RECORD</Text>
               <Text style={styles.modalTitle}>
-                {kind === "fuel" ? "Record a fill-up" : "Add car expense"}
+                {kind === "fuel" ? "Record a fill-up" : "Add car expense / wash"}
               </Text>
             </View>
             <IconButton icon="close" onPress={onClose} />
@@ -2949,7 +3091,7 @@ function EntryModal({
           <View style={[styles.segment, compact && styles.segmentMobile]}>
             {[
               ["fuel", "Fuel fill-up"],
-              ["expense", "Expense / service"],
+              ["expense", "Expense / service / wash"],
             ].map(([id, label]) => (
               <TouchableOpacity
                 key={id}
@@ -3074,7 +3216,7 @@ function EntryModal({
                     </View>
                     <View>
                       <Text style={styles.uploadTitle}>
-                        Upload dealership or service bill
+                        Upload bill or receipt
                       </Text>
                       <Text style={styles.uploadText}>
                         Choose a photo from this device
@@ -3163,6 +3305,7 @@ function EntryModal({
                     <FormField
                       label="Category"
                       value={form.category}
+                      placeholder="e.g. Car Wash, Service, Toll"
                       onChangeText={(category) =>
                         setForm({ ...form, category })
                       }
@@ -3177,14 +3320,92 @@ function EntryModal({
                     />
                   </View>
                 </View>
+
+                {/* Quick selector buttons for Car Wash */}
+                <View style={styles.categoryShortcutRow}>
+                  {["Car Wash", "Service", "Parking", "Tolls"].map((cat) => (
+                    <TouchableOpacity
+                      key={cat}
+                      onPress={() => setForm({ ...form, category: cat })}
+                      style={[
+                        styles.categoryShortcutBadge,
+                        form.category === cat && styles.categoryShortcutBadgeActive,
+                      ]}
+                    >
+                      <Text
+                        style={[
+                          styles.categoryShortcutText,
+                          form.category === cat && styles.categoryShortcutTextActive,
+                        ]}
+                      >
+                        {cat}
+                      </Text>
+                    </TouchableOpacity>
+                  ))}
+                </View>
+
+                {/* Conditional Fields for Car Wash Duration & Reminder */}
+                {isWashCategory && (
+                  <View style={styles.washFieldsContainer}>
+                    <View style={[styles.formRow, compact && styles.formRowMobile]}>
+                      <View style={{ flex: 1 }}>
+                        <FormField
+                          label="Wash Duration (minutes)"
+                          placeholder="e.g. 30, 45, 60"
+                          value={form.washDuration}
+                          onChangeText={(washDuration) =>
+                            setForm({ ...form, washDuration })
+                          }
+                          numeric
+                        />
+                      </View>
+                      <View style={{ flex: 1 }}>
+                        <Text style={styles.fieldLabel}>Next Wash Reminder</Text>
+                        <View style={styles.reminderPillsRow}>
+                          {[
+                            ["7", "1 wk"],
+                            ["14", "2 wks"],
+                            ["30", "1 mo"],
+                            ["0", "Off"],
+                          ].map(([days, label]) => (
+                            <TouchableOpacity
+                              key={days}
+                              onPress={() =>
+                                setForm({ ...form, washReminderDays: days })
+                              }
+                              style={[
+                                styles.reminderPill,
+                                form.washReminderDays === days &&
+                                  styles.reminderPillActive,
+                              ]}
+                            >
+                              <Text
+                                style={[
+                                  styles.reminderPillText,
+                                  form.washReminderDays === days &&
+                                    styles.reminderPillTextActive,
+                                ]}
+                              >
+                                {label}
+                              </Text>
+                            </TouchableOpacity>
+                          ))}
+                        </View>
+                      </View>
+                    </View>
+                  </View>
+                )}
+
                 <FormField
-                  label="Dealership / vendor"
+                  label="Dealership / Vendor / Location"
                   value={form.workshop}
+                  placeholder="e.g. 3M Car Care, Shell Auto Wash"
                   onChangeText={(workshop) => setForm({ ...form, workshop })}
                 />
                 <FormField
                   label="Work performed / description"
                   value={form.description}
+                  placeholder="e.g. Foam wash, interior vacuuming, polish"
                   onChangeText={(description) =>
                     setForm({ ...form, description })
                   }
@@ -3217,7 +3438,7 @@ function EntryModal({
               onPress={save}
               icon="checkmark"
             >
-              {savingRecord ? "Saving images…" : "Save record"}
+              {savingRecord ? "Saving…" : "Save record"}
             </Button>
           </View>
         </View>
@@ -3301,7 +3522,7 @@ export default function App() {
   const [account, setAccount] = useState(null);
   const [darkMode, setDarkMode] = useState(true);
   const [page, setPage] = useState("home");
-  const [modal, setModal] = useState({ open: false, type: "fuel" });
+  const [modal, setModal] = useState({ open: false, type: "fuel", defaultCategory: "" });
   const [crewNotification, setCrewNotification] = useState(null);
   const [notificationsOpen, setNotificationsOpen] = useState(false);
   const [notificationUnread, setNotificationUnread] = useState(false);
@@ -3673,12 +3894,16 @@ export default function App() {
         allVehicles={activeVehicleId === "all"}
         vehicleCount={vehicles.length}
         setPage={setPage}
-        openAdd={(type) => setModal({ open: true, type })}
+        openAdd={(type, cat) =>
+          setModal({ open: true, type, defaultCategory: cat || "" })
+        }
       />
     ) : page === "logs" ? (
       <LogsScreen
         data={scopedData}
-        openAdd={(type) => setModal({ open: true, type })}
+        openAdd={(type, cat) =>
+          setModal({ open: true, type, defaultCategory: cat || "" })
+        }
         remove={remove}
       />
     ) : page === "crew" ? (
@@ -3733,6 +3958,7 @@ export default function App() {
           setModal({
             open: true,
             type: page === "expenses" ? "expense" : "fuel",
+            defaultCategory: "",
           })
         }
       >
@@ -3741,6 +3967,7 @@ export default function App() {
       <EntryModal
         visible={modal.open}
         type={modal.type}
+        defaultCategory={modal.defaultCategory}
         onClose={() => setModal({ ...modal, open: false })}
         onSave={add}
         vehicle={activeVehicle}
@@ -4291,10 +4518,95 @@ const styleDefinitions = {
     borderColor: C.line,
     padding: 22,
   },
-  cardMobileAuto: {
-    flexGrow: 0,
-    flexShrink: 0,
-    flexBasis: "auto",
+  washReminderCard: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 14,
+    backgroundColor: C.white,
+    borderRadius: 16,
+    borderWidth: 1,
+    borderColor: C.line,
+    padding: 16,
+  },
+  washReminderIconWrap: {
+    width: 44,
+    height: 44,
+    borderRadius: 12,
+    backgroundColor: C.mint,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  washReminderTitle: {
+    fontSize: 14,
+    fontWeight: "800",
+    color: C.ink,
+  },
+  washReminderText: {
+    fontSize: 12,
+    color: C.muted,
+    marginTop: 2,
+  },
+  categoryShortcutRow: {
+    flexDirection: "row",
+    gap: 8,
+    marginBottom: 16,
+    flexWrap: "wrap",
+  },
+  categoryShortcutBadge: {
+    paddingHorizontal: 12,
+    paddingVertical: 7,
+    borderRadius: 20,
+    backgroundColor: C.mint,
+    borderWidth: 1,
+    borderColor: C.line,
+  },
+  categoryShortcutBadgeActive: {
+    backgroundColor: C.accentSurface,
+    borderColor: C.accentSurface,
+  },
+  categoryShortcutText: {
+    fontSize: 11,
+    fontWeight: "700",
+    color: C.green,
+  },
+  categoryShortcutTextActive: {
+    color: C.onAccent,
+  },
+  washFieldsContainer: {
+    padding: 14,
+    borderRadius: 14,
+    backgroundColor: "#F2F7F9",
+    borderWidth: 1,
+    borderColor: C.line,
+    marginBottom: 16,
+  },
+  reminderPillsRow: {
+    flexDirection: "row",
+    gap: 6,
+    height: 48,
+    alignItems: "center",
+  },
+  reminderPill: {
+    flex: 1,
+    height: 44,
+    borderRadius: 10,
+    borderWidth: 1,
+    borderColor: C.line,
+    backgroundColor: C.white,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  reminderPillActive: {
+    backgroundColor: C.accentSurface,
+    borderColor: C.accentSurface,
+  },
+  reminderPillText: {
+    fontSize: 12,
+    fontWeight: "700",
+    color: C.ink,
+  },
+  reminderPillTextActive: {
+    color: C.onAccent,
   },
   metric: {
     flex: 1,
